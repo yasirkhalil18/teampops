@@ -1,0 +1,1247 @@
+:root {
+  --bg-dark: #0a0e17;
+  --cold-cyan: #38bdf8;
+  --fire-orange: #f97316;
+  --fire-yellow: #facc15;
+  --shadow-purple: #8b5cf6;
+  --danger-red: #ef4444;
+  --frost-white: #f8fafc;
+  --glass-bg: rgba(15, 23, 42, 0.78);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-shadow: 0 12px 36px 0 rgba(0, 0, 0, 0.65);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+body, html {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg-dark);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  color: var(--frost-white);
+}
+
+#game-container {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+}
+
+/* Glassmorphism Classes */
+.glassmorphic {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 18px;
+}
+
+.glassmorphic-sm {
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* Frost and Damage Overlay Effects */
+#frost-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  box-shadow: inset 0 0 120px rgba(56, 189, 248, 0);
+  transition: box-shadow 0.5s ease;
+}
+
+#damage-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 11;
+  background: rgba(239, 68, 68, 0);
+  transition: background 0.2s ease;
+}
+
+#blizzard-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9;
+  background: radial-gradient(circle, transparent 40%, rgba(200, 230, 255, 0.08) 100%);
+  opacity: 0;
+  transition: opacity 1s ease;
+}
+
+/* Overlays / Screens */
+.screen-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  background: rgba(4, 7, 15, 0.6);
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.hidden {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/* Menu Card */
+.menu-card {
+  max-width: 620px;
+  width: 90%;
+  padding: 48px 40px;
+  text-align: center;
+  position: relative;
+  animation: floatIn 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes floatIn {
+  from { opacity: 0; transform: translateY(20px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.jam-badges {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.badge {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.8rem;
+  letter-spacing: 1.5px;
+  padding: 6px 14px;
+  border-radius: 9999px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.badge-fire {
+  background: rgba(249, 115, 22, 0.2);
+  border: 1px solid var(--fire-orange);
+  color: #fb923c;
+  text-shadow: 0 0 10px rgba(249, 115, 22, 0.5);
+}
+
+.badge-shadow {
+  background: rgba(139, 92, 246, 0.2);
+  border: 1px solid var(--shadow-purple);
+  color: #c084fc;
+  text-shadow: 0 0 10px rgba(139, 92, 246, 0.5);
+}
+
+.badge-time {
+  background: rgba(56, 189, 248, 0.2);
+  border: 1px solid var(--cold-cyan);
+  color: #7dd3fc;
+  text-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+}
+
+.game-title {
+  font-family: 'Cinzel', serif;
+  font-size: 3.4rem;
+  font-weight: 900;
+  letter-spacing: 5px;
+  color: #ffffff;
+  text-shadow: 0 0 35px rgba(56, 189, 248, 0.4);
+  line-height: 1.1;
+}
+
+.game-subtitle {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 1.1rem;
+  letter-spacing: 8px;
+  color: var(--cold-cyan);
+  margin-bottom: 20px;
+}
+
+.menu-desc {
+  font-size: 0.95rem;
+  color: #94a3b8;
+  line-height: 1.6;
+  margin-bottom: 32px;
+}
+
+.menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+  color: #fff;
+  border: none;
+  padding: 16px 28px;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 2px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  box-shadow: 0 8px 25px rgba(234, 88, 12, 0.45);
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 12px 30px rgba(234, 88, 12, 0.65);
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 13px 24px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.menu-footer {
+  margin-top: 30px;
+  font-size: 0.75rem;
+  color: #64748b;
+  letter-spacing: 2px;
+}
+
+/* Controls Guide */
+.guide-card {
+  max-width: 500px;
+  width: 90%;
+  padding: 36px 30px;
+  text-align: center;
+}
+
+.guide-card h3 {
+  font-family: 'Cinzel', serif;
+  font-size: 1.6rem;
+  letter-spacing: 3px;
+  margin-bottom: 24px;
+  color: var(--cold-cyan);
+}
+
+.guide-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  text-align: left;
+  margin-bottom: 28px;
+}
+
+.guide-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.9rem;
+  color: #cbd5e1;
+}
+
+.key {
+  font-family: 'Share Tech Mono', monospace;
+  background: #1e293b;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  font-weight: 700;
+  color: #38bdf8;
+  font-size: 0.85rem;
+}
+
+/* HUD System */
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.hud-top {
+  position: absolute;
+  top: 20px;
+  left: 24px;
+  right: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.time-widget, .weather-widget, .objective-widget {
+  padding: 10px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.clock-icon {
+  font-size: 1.5rem;
+}
+
+.time-info {
+  display: flex;
+  flex-direction: column;
+}
+
+#day-counter {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--cold-cyan);
+  letter-spacing: 1px;
+}
+
+#time-display {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #f8fafc;
+  letter-spacing: 1px;
+  text-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+}
+
+.dusk-badge {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.38);
+  padding: 3px 8px;
+  border-radius: 5px;
+  margin-top: 3px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  display: inline-block;
+  transition: all 0.3s ease;
+}
+
+.dusk-badge.urgent {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.55);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.35);
+  animation: urgentPulse 1.2s infinite alternate;
+}
+
+.dusk-badge.ready {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.2);
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+@keyframes urgentPulse {
+  0% { transform: scale(0.98); opacity: 0.85; }
+  100% { transform: scale(1.02); opacity: 1.0; }
+}
+
+/* Mission Tracker Widget (Replaces single objective) */
+.mission-tracker-widget {
+  max-width: 520px;
+  min-width: 360px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mission-tracker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 5px;
+}
+
+.mission-header-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mission-header-icon {
+  font-size: 0.95rem;
+}
+
+.mission-header-title {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 1.5px;
+  color: var(--fire-orange);
+  font-weight: 700;
+}
+
+.badge-missions {
+  background: rgba(56, 189, 248, 0.2);
+  border: 1px solid var(--cold-cyan);
+  color: var(--cold-cyan);
+  font-size: 0.65rem;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+.map-hint-badge {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.7rem;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.15);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.map-hint-badge:hover {
+  background: rgba(251, 191, 36, 0.3);
+  transform: scale(1.05);
+}
+
+.mission-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 110px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.mission-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.03);
+  transition: background 0.15s ease;
+}
+
+.mission-item.active {
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.mission-item.completed {
+  opacity: 0.65;
+}
+
+.mission-check {
+  font-family: monospace;
+  font-weight: bold;
+  font-size: 0.85rem;
+  width: 16px;
+  text-align: center;
+  color: #94a3b8;
+}
+
+.mission-check.done {
+  color: #22c55e;
+}
+
+.mission-name {
+  flex: 1;
+  font-weight: 600;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mission-zone-tag {
+  font-size: 0.65rem;
+  color: #94a3b8;
+  font-family: 'Share Tech Mono', monospace;
+}
+
+.mission-badge-status {
+  font-size: 0.62rem;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: 'Share Tech Mono', monospace;
+  font-weight: 700;
+}
+
+.mission-badge-status.done {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.mission-badge-status.pending {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+/* Minimap Radar & Locked State */
+.minimap-widget {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 110px;
+}
+
+.minimap-locked-box {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  border: 2px dashed rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.85);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  text-align: center;
+  padding: 6px;
+}
+
+.locked-icon {
+  font-size: 1.3rem;
+  opacity: 0.8;
+}
+
+.locked-label {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #ef4444;
+  letter-spacing: 1px;
+}
+
+.locked-sub {
+  font-size: 0.55rem;
+  color: #94a3b8;
+  line-height: 1.1;
+}
+
+#minimap-canvas {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  border: 2px solid rgba(56, 189, 248, 0.4);
+  background: rgba(10, 18, 30, 0.85);
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.6), inset 0 0 10px rgba(56, 189, 248, 0.2);
+  cursor: pointer;
+}
+
+.minimap-label {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--cold-cyan);
+  letter-spacing: 1.5px;
+}
+
+/* Crosshair */
+#crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 6px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
+}
+
+#interaction-prompt {
+  position: absolute;
+  top: 56%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 8px 18px;
+  border-radius: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  animation: pulsePrompt 1.5s infinite;
+}
+
+@keyframes pulsePrompt {
+  0%, 100% { transform: translateX(-50%) scale(1); }
+  50% { transform: translateX(-50%) scale(1.05); }
+}
+
+.interact-key {
+  color: var(--fire-yellow);
+}
+
+/* Bottom Left: Vitals */
+.hud-bottom-left {
+  position: absolute;
+  bottom: 24px;
+  left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 250px;
+}
+
+.vital-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vital-icon {
+  font-size: 1.1rem;
+  width: 24px;
+  text-align: center;
+}
+
+.vital-bar-bg {
+  flex: 1;
+  height: 12px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  overflow: hidden;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.vital-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.vital-health { background: linear-gradient(90deg, #ef4444, #f87171); }
+.vital-warmth { background: linear-gradient(90deg, #f97316, #fbbf24); box-shadow: 0 0 10px rgba(249, 115, 22, 0.5); }
+.vital-hunger { background: linear-gradient(90deg, #10b981, #34d399); }
+.vital-energy { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+.vital-torch  { background: linear-gradient(90deg, #eab308, #fef08a); }
+
+.vital-val {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.8rem;
+  font-weight: 700;
+  width: 40px;
+  text-align: right;
+  color: #cbd5e1;
+}
+
+/* Bottom Right */
+.hud-bottom-right {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.active-item-card {
+  padding: 10px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.slot-badge {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--fire-yellow);
+  font-weight: 800;
+}
+
+.tool-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.quick-hints {
+  display: flex;
+  gap: 12px;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.hint-key {
+  color: #fff;
+  font-weight: 700;
+}
+
+/* Backpack Modal */
+.backpack-card {
+  width: 550px;
+  padding: 32px;
+  pointer-events: auto;
+}
+
+.backpack-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.backpack-header h3 {
+  font-family: 'Cinzel', serif;
+  font-size: 1.4rem;
+  letter-spacing: 2px;
+}
+
+.cap-indicator {
+  font-family: 'Share Tech Mono', monospace;
+  color: var(--cold-cyan);
+  font-weight: 700;
+}
+
+.backpack-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.inv-slot {
+  aspect-ratio: 1;
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.inv-slot:hover {
+  background: rgba(51, 65, 85, 0.8);
+  border-color: var(--cold-cyan);
+}
+
+.slot-icon {
+  font-size: 1.8rem;
+}
+
+.slot-qty {
+  position: absolute;
+  bottom: 6px;
+  right: 8px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #e2e8f0;
+}
+
+.crafting-panel {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 18px;
+}
+
+.crafting-panel h4 {
+  font-size: 0.85rem;
+  letter-spacing: 1.5px;
+  color: #94a3b8;
+  margin-bottom: 12px;
+}
+
+.craft-recipes {
+  display: flex;
+  gap: 12px;
+}
+
+.btn-craft {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #f1f5f9;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-craft:hover {
+  background: rgba(249, 115, 22, 0.25);
+  border-color: var(--fire-orange);
+}
+
+.backpack-close-hint {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+/* Toast Notifications */
+#toast-container {
+  position: absolute;
+  top: 90px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 30;
+}
+
+.toast {
+  background: rgba(15, 23, 42, 0.9);
+  border-left: 4px solid var(--cold-cyan);
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+  animation: slideToast 0.3s ease;
+}
+
+@keyframes slideToast {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Death & Victory */
+.death-card {
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.death-title {
+  font-family: 'Cinzel', serif;
+  font-size: 3rem;
+  color: #ef4444;
+  letter-spacing: 4px;
+  text-shadow: 0 0 30px rgba(239, 68, 68, 0.6);
+  margin-bottom: 12px;
+}
+
+.victory-glow {
+  color: #facc15 !important;
+  text-shadow: 0 0 35px rgba(250, 204, 21, 0.6) !important;
+}
+
+/* Fullscreen Topographic Map Modal */
+.map-modal-card {
+  max-width: 1140px;
+  width: 95%;
+  max-height: 92vh;
+  padding: 24px 28px;
+  display: flex;
+  flex-direction: column;
+  animation: floatIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  background: rgba(10, 15, 26, 0.92);
+}
+
+.map-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 14px;
+  margin-bottom: 16px;
+}
+
+.map-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.map-title {
+  font-family: 'Cinzel', serif;
+  font-size: 1.4rem;
+  letter-spacing: 2px;
+  color: #f8fafc;
+}
+
+.map-body {
+  display: flex;
+  gap: 24px;
+  flex: 1;
+  min-height: 0;
+}
+
+.map-canvas-container {
+  flex: 1.5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+#fullscreen-map-canvas {
+  width: 100%;
+  height: auto;
+  max-height: 520px;
+  aspect-ratio: 760 / 560;
+  border-radius: 12px;
+  border: 1.5px solid rgba(56, 189, 248, 0.4);
+  background: #080d17;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), inset 0 0 50px rgba(0, 0, 0, 0.85);
+}
+
+.map-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+  font-size: 0.72rem;
+  color: #94a3b8;
+  font-family: 'Share Tech Mono', monospace;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.dot-player {
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+}
+
+.legend-line {
+  width: 16px;
+  height: 3px;
+  display: inline-block;
+}
+
+.line-road {
+  background: #c2884a;
+}
+
+.dot-mission {
+  background: #f59e0b;
+  box-shadow: 0 0 8px #f59e0b;
+}
+
+.dot-gate {
+  background: #ef4444;
+  box-shadow: 0 0 8px #ef4444;
+}
+
+.dot-done {
+  background: #22c55e;
+  box-shadow: 0 0 8px #22c55e;
+}
+
+.map-missions-sidebar {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 16px;
+  min-height: 0;
+}
+
+.sidebar-title {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.85rem;
+  letter-spacing: 1.5px;
+  color: var(--fire-orange);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 8px;
+}
+
+.map-missions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  max-height: 380px;
+  padding-right: 4px;
+  scrollbar-width: thin;
+}
+
+.map-mission-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  padding: 10px 12px;
+  border-left: 3px solid #f59e0b;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: all 0.2s ease;
+}
+
+.map-mission-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.map-mission-card.done {
+  border-left-color: #22c55e;
+  background: rgba(34, 197, 94, 0.05);
+}
+
+.map-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.map-card-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #f8fafc;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.map-card-desc {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  line-height: 1.35;
+}
+
+.map-card-zone {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--cold-cyan);
+}
+
+.map-lore-note {
+  margin-top: auto;
+  font-size: 0.72rem;
+  color: #cbd5e1;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  padding: 10px 12px;
+  border-radius: 8px;
+  line-height: 1.4;
+}
+
+/* Cinematic Letterbox & Trailer Overlay */
+#cinematic-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: opacity 0.5s ease;
+}
+
+.cinematic-bar {
+  height: 72px;
+  background: #000000;
+  width: 100%;
+}
+
+.cinematic-content {
+  text-align: center;
+  padding: 24px;
+  animation: fadeIn 0.6s ease;
+}
+
+.cinematic-theme-tag {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.88rem;
+  letter-spacing: 2px;
+  color: #f59e0b;
+  margin-bottom: 8px;
+  text-shadow: 0 0 12px rgba(245, 158, 11, 0.6);
+}
+
+.cinematic-main-title {
+  font-family: 'Cinzel', serif;
+  font-size: 2.2rem;
+  font-weight: 800;
+  letter-spacing: 4px;
+  color: #f8fafc;
+  text-shadow: 0 0 18px rgba(56, 189, 248, 0.6);
+  margin-bottom: 6px;
+}
+
+.cinematic-sub-title {
+  font-size: 1.05rem;
+  color: #cbd5e1;
+  max-width: 680px;
+  margin: 0 auto 14px;
+  font-style: italic;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+.cinematic-skip-hint {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 1.5px;
+  color: #94a3b8;
+  background: rgba(15, 23, 42, 0.75);
+  display: inline-block;
+  padding: 5px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+/* Story Subtitles Bar */
+#story-subtitle-bar {
+  position: absolute;
+  bottom: 85px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 780px;
+  width: 90%;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(245, 158, 11, 0.2);
+  border-radius: 12px;
+  padding: 12px 24px;
+  text-align: center;
+  z-index: 45;
+  pointer-events: none;
+  transition: opacity 0.4s ease, transform 0.4s ease;
+  backdrop-filter: blur(10px);
+}
+
+#story-subtitle-bar.hidden {
+  opacity: 0;
+  transform: translate(-50%, 15px);
+  pointer-events: none;
+}
+
+.subtitle-speaker {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.78rem;
+  letter-spacing: 2px;
+  font-weight: 700;
+  color: #f59e0b;
+  margin-bottom: 4px;
+  text-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.subtitle-text {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.12rem;
+  font-weight: 600;
+  color: #f8fafc;
+  line-height: 1.4;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+}
+
+/* Evacuation Lore Note Modal */
+#note-modal {
+  z-index: 55;
+}
+
+.note-card {
+  max-width: 520px;
+  width: 90%;
+  background: linear-gradient(135deg, rgba(30, 24, 18, 0.94), rgba(15, 23, 42, 0.96));
+  border: 1px solid rgba(217, 119, 6, 0.4);
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.8), 0 0 25px rgba(245, 158, 11, 0.25);
+  padding: 32px 28px;
+  border-radius: 14px;
+  text-align: left;
+  position: relative;
+}
+
+.note-badge {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 2px;
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.15);
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  display: inline-block;
+  margin-bottom: 12px;
+}
+
+.note-title {
+  font-family: 'Cinzel', serif;
+  font-size: 1.45rem;
+  color: #fef3c7;
+  letter-spacing: 1.5px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  padding-bottom: 8px;
+}
+
+.note-body {
+  font-size: 0.92rem;
+  color: #e2e8f0;
+  line-height: 1.6;
+  margin-bottom: 20px;
+  font-style: italic;
+}
+
+.note-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 14px;
+}
+
+.note-author {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+/* Mission Gate Badges */
+.badge-gate-open {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.badge-gate-locked {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}

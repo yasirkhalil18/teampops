@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FROSTBOUND: The Long Descent | 3D Survival Jam</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;900&family=Plus+Jakarta+Sans:wght@400;500;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div id="game-container"></div>
+
+  <!-- Frost / Cold Overlay Vignette -->
+  <div id="frost-overlay"></div>
+  <div id="damage-flash"></div>
+  <div id="blizzard-overlay"></div>
+
+  <!-- Main Menu / Start Screen -->
+  <div id="main-menu" class="screen-overlay">
+    <div class="menu-card glassmorphic">
+      <div class="jam-badges">
+        <span class="badge badge-fire">🔥 FIRE</span>
+        <span class="badge badge-shadow">🌑 SHADOW</span>
+        <span class="badge badge-time">⏳ TIME</span>
+      </div>
+      <h1 class="game-title">FROSTBOUND</h1>
+      <h2 class="game-subtitle">THE LONG DESCENT</h2>
+      <p class="menu-desc">A sudden alpine landslide blocks the mountain pass. Daylight fades. A deadly frost is closing in. Keep the flame alive, survive the whispering shadows, and navigate the treacherous wilderness to reach the Radio Tower.</p>
+      
+      <div class="menu-actions">
+        <button id="btn-start" class="btn-primary">SURVIVE THE NIGHT</button>
+        <button id="btn-trailer" class="btn-secondary" style="border-color: #f59e0b; color: #f59e0b;">🎬 60S TRAILER MODE [T]</button>
+        <button id="btn-how" class="btn-secondary">CONTROLS & SURVIVAL GUIDE</button>
+      </div>
+
+      <div class="menu-footer">
+        <span>VIBE CODING JAM 2026</span> • <span>3D OPEN WORLD SURVIVAL</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls Guide Modal -->
+  <div id="controls-modal" class="screen-overlay hidden">
+    <div class="guide-card glassmorphic">
+      <h3>SURVIVAL PROTOCOL</h3>
+      <div class="guide-grid">
+        <div class="guide-item"><span class="key">W A S D</span> Walk & Strafe</div>
+        <div class="guide-item"><span class="key">SPACE</span> Jump (Obstacles & Gaps)</div>
+        <div class="guide-item"><span class="key">M</span> Fullscreen Map (Unlock via Cabin)</div>
+        <div class="guide-item"><span class="key">T</span> 60s Cinematic Trailer Mode</div>
+        <div class="guide-item"><span class="key">V</span> Toggle 1st / 3rd Person View</div>
+        <div class="guide-item"><span class="key">P</span> Toggle Post-Processing (FX ON/OFF)</div>
+        <div class="guide-item"><span class="key">MOUSE</span> Look / Turn</div>
+        <div class="guide-item"><span class="key">SHIFT</span> Sprint (Consumes Stamina)</div>
+        <div class="guide-item"><span class="key">E</span> Interact / Scavenge / Harvest</div>
+        <div class="guide-item"><span class="key">F</span> Toggle Torch (Light & Warmth)</div>
+        <div class="guide-item"><span class="key">TAB</span> Open Backpack / Inventory</div>
+        <div class="guide-item"><span class="key">Z</span> Rest & Sleep (Near Campfire/Bed)</div>
+        <div class="guide-item"><span class="key">L-CLICK</span> Attack / Ward Off Beast</div>
+      </div>
+      <div class="credits-box" style="margin-top: 14px; font-size: 0.72rem; color: #94a3b8; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px; line-height: 1.4; text-align: left;">
+        <span style="color: #38bdf8; font-weight: 700;">CREDITS & CC0 ASSET ATTRIBUTION:</span><br>
+        • Poly Haven (CC0 1K HDRIs, PBR Terrain Splat Normal & Diffuse Maps)<br>
+        • Kenney (CC0 Nature, Props & Graveyard 3D Models)<br>
+        • Quaternius & ambientCG (CC0 3D Architecture & Texture references)
+      </div>
+      <div style="display: flex; gap: 10px; justify-content: center; margin-top: 14px; flex-wrap: wrap;">
+        <button id="btn-close-how" class="btn-secondary">GOT IT</button>
+        <button id="btn-open-credits" class="btn-secondary" style="font-size: 0.72rem; border-color: #f59e0b; color: #f59e0b;">📜 VIEW FULL CREDITS</button>
+        <button id="btn-test-map" class="btn-secondary" style="font-size: 0.72rem; opacity: 0.85; border-color: #38bdf8; color: #38bdf8;">🗺️ TEST: EQUIP CABIN MAP</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dedicated Full Credits Modal -->
+  <div id="credits-modal" class="screen-overlay hidden">
+    <div class="guide-card glassmorphic" style="max-width: 620px; max-height: 85vh; overflow-y: auto; text-align: left;">
+      <h3 style="text-align: center; color: #f59e0b; margin-bottom: 12px;">ASSET ATTRIBUTION & LICENSES</h3>
+      <div style="font-size: 0.8rem; line-height: 1.5; color: #cbd5e1; display: flex; flex-direction: column; gap: 10px;">
+        <div>
+          <strong style="color: #38bdf8;">1. Poly Haven (CC0 Public Domain)</strong><br>
+          • <em>Sky HDRIs:</em> kloofendal_48d_partly_cloudy_1k.hdr (day) & blue_lagoon_night_1k.hdr (night/dusk).<br>
+          • <em>Terrain PBR Splat Textures:</em> grass_ground (grass), brown_mud (dirt), cliff_side (rock/cliff), snow_02 (snow) with diffuse & normal maps.
+        </div>
+        <div>
+          <strong style="color: #38bdf8;">2. Kenney (CC0 1.0 Universal)</strong><br>
+          • <em>Nature Kit:</em> Pine trees, birch trees, dead trees, stumps, bushes, boulders, small rocks, fallen logs, grass foliage, flowers.<br>
+          • <em>Props & Graveyard Kits:</em> Broken fences, wooden barrels, survival props.
+        </div>
+        <div>
+          <strong style="color: #38bdf8;">3. Quaternius & ambientCG (CC0)</strong><br>
+          • Modular survival props and expedition SUV design references.
+        </div>
+        <div>
+          <strong style="color: #38bdf8;">4. Audio & Ambience</strong><br>
+          • Procedural sound synthesis via Web Audio API (wind, creek, wolf howling, bird calls, and atmospheric drones).
+        </div>
+      </div>
+      <div style="text-align: center; margin-top: 18px;">
+        <button id="btn-close-credits" class="btn-primary" style="padding: 8px 24px;">CLOSE CREDITS</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- In-Game HUD -->
+  <div id="hud" class="hidden">
+    <!-- Top Bar: Time, Compass, Weather -->
+    <div class="hud-top">
+      <div class="time-widget glassmorphic-sm">
+        <div class="clock-icon" id="clock-icon">☀️</div>
+        <div class="time-info">
+          <span id="day-counter">DAY 1</span>
+          <span id="time-display">17:30</span>
+          <span id="dusk-deadline-badge" class="dusk-badge">⏳ CHAPTER 1 DUSK: 19:00</span>
+        </div>
+      </div>
+
+      <div class="weather-widget glassmorphic-sm">
+        <span id="weather-icon">❄️</span>
+        <span id="weather-desc">LIGHT SNOW</span>
+      </div>
+
+      <div class="weather-widget glassmorphic-sm" id="camera-mode-widget" style="cursor: pointer;" title="Press V to toggle camera view">
+        <span id="camera-icon">📷</span>
+        <span id="camera-mode-desc">1ST PERSON [V]</span>
+      </div>
+
+      <div class="weather-widget glassmorphic-sm" id="postproc-widget" style="cursor: pointer;" title="Press P to toggle Post-Processing">
+        <span id="postproc-icon">✨</span>
+        <span id="postproc-desc">POST-FX: ON [P]</span>
+      </div>
+
+      <!-- Expedition Mission Tracker Widget -->
+      <div class="mission-tracker-widget glassmorphic-sm" id="mission-tracker-widget">
+        <div class="mission-tracker-header" id="mission-tracker-header">
+          <div class="mission-header-title-wrap">
+            <span class="mission-header-icon">📋</span>
+            <span class="mission-header-title">STORY CHAPTERS</span>
+            <span id="missions-counter-badge" class="badge badge-missions">0/8 DONE</span>
+          </div>
+          <span class="map-hint-badge" id="btn-open-map-hint" title="Press M to view Map">[M] MAP</span>
+        </div>
+        <div class="mission-list" id="mission-list">
+          <!-- Populated dynamically by JS -->
+        </div>
+      </div>
+
+      <!-- Minimap Radar (Locked until Map item acquired from Cabin) -->
+      <div class="minimap-widget glassmorphic-sm" id="minimap-widget">
+        <div id="minimap-locked-content" class="minimap-locked-box">
+          <span class="locked-icon">🔒</span>
+          <span class="locked-label">MAP LOCKED</span>
+          <span class="locked-sub">Search Cabin in Zone 4</span>
+        </div>
+        <div id="minimap-unlocked-content" class="hidden">
+          <canvas id="minimap-canvas" width="110" height="110"></canvas>
+          <span class="minimap-label">RADAR MAP [M]</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center Crosshair & Interaction Prompt -->
+    <div id="crosshair"></div>
+    <div id="interaction-prompt" class="hidden">
+      <span class="interact-key">[E]</span>
+      <span id="interact-text">Scavenge</span>
+    </div>
+
+    <!-- Bottom Left: Vitals Status Bars -->
+    <div class="hud-bottom-left">
+      <!-- Health -->
+      <div class="vital-row">
+        <div class="vital-icon">❤️</div>
+        <div class="vital-bar-bg">
+          <div id="bar-health" class="vital-fill vital-health" style="width: 100%;"></div>
+        </div>
+        <span id="val-health" class="vital-val">100</span>
+      </div>
+
+      <!-- Warmth / Temperature (FIRE THEME) -->
+      <div class="vital-row">
+        <div class="vital-icon">🔥</div>
+        <div class="vital-bar-bg">
+          <div id="bar-warmth" class="vital-fill vital-warmth" style="width: 100%;"></div>
+        </div>
+        <span id="val-warmth" class="vital-val">100%</span>
+      </div>
+
+      <!-- Hunger -->
+      <div class="vital-row">
+        <div class="vital-icon">🍖</div>
+        <div class="vital-bar-bg">
+          <div id="bar-hunger" class="vital-fill vital-hunger" style="width: 85%;"></div>
+        </div>
+        <span id="val-hunger" class="vital-val">85%</span>
+      </div>
+
+      <!-- Energy / Rest -->
+      <div class="vital-row">
+        <div class="vital-icon">⚡</div>
+        <div class="vital-bar-bg">
+          <div id="bar-energy" class="vital-fill vital-energy" style="width: 100%;"></div>
+        </div>
+        <span id="val-energy" class="vital-val">100%</span>
+      </div>
+
+      <!-- Torch Oil / Flame Fuel -->
+      <div class="vital-row">
+        <div class="vital-icon">🕯️</div>
+        <div class="vital-bar-bg">
+          <div id="bar-torch" class="vital-fill vital-torch" style="width: 100%;"></div>
+        </div>
+        <span id="val-torch" class="vital-val">100%</span>
+      </div>
+    </div>
+
+    <!-- Bottom Right: Quick Tool Bar & Prompts -->
+    <div class="hud-bottom-right">
+      <div class="active-item-card glassmorphic-sm">
+        <span class="slot-badge">[F]</span>
+        <div class="tool-preview">
+          <span id="active-tool-icon">🔦</span>
+          <span id="active-tool-name">Torched Pine</span>
+        </div>
+      </div>
+      <div class="quick-hints">
+        <span class="hint-key">[M]</span> Map
+        <span class="hint-key">[TAB]</span> Bag
+        <span class="hint-key">[Z]</span> Sleep
+        <span class="hint-key">[L-Click]</span> Attack
+      </div>
+    </div>
+
+    <!-- Fullscreen Topographic Map Modal (Unlocked via Cabin Map Item) -->
+    <div id="map-modal" class="screen-overlay hidden">
+      <div class="map-modal-card glassmorphic">
+        <div class="map-header">
+          <div class="map-header-left">
+            <div class="jam-badges">
+              <span class="badge badge-fire">🗺️ SURVEYOR MAP</span>
+              <span class="badge badge-time" id="map-player-zone">ZONE 1: CRASH SITE</span>
+              <span class="badge badge-shadow" id="map-mission-stat">0/8 MISSIONS</span>
+            </div>
+            <h2 class="map-title">ALPINE PASS TOPOGRAPHY & MISSION GRID</h2>
+          </div>
+          <button id="btn-close-map" class="btn-secondary btn-sm">CLOSE [ESC / M]</button>
+        </div>
+
+        <div class="map-body">
+          <div class="map-canvas-container">
+            <canvas id="fullscreen-map-canvas" width="760" height="560"></canvas>
+            <div class="map-legend">
+              <span class="legend-item"><span class="legend-dot dot-player"></span> Player (Facing Dir)</span>
+              <span class="legend-item"><span class="legend-line line-road"></span> Winding Road (1728m)</span>
+              <span class="legend-item"><span class="legend-dot dot-mission"></span> Mission Target</span>
+              <span class="legend-item"><span class="legend-dot dot-gate"></span> Physical Gate</span>
+              <span class="legend-item"><span class="legend-dot dot-done"></span> Completed</span>
+            </div>
+          </div>
+
+          <div class="map-missions-sidebar">
+            <h4 class="sidebar-title">EXPEDITION MISSIONS</h4>
+            <div class="map-missions-list" id="map-missions-list">
+              <!-- Populated dynamically in JS -->
+            </div>
+            <div class="map-lore-note">
+              <p>💡 <b>Linear Story & Gates:</b> Complete each chapter mission sequentially to unlock the next physical gate. <b>8 missions</b> lead from the SUV Avalanche Blockade to the summit helicopter extraction.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Backpack / Inventory Modal -->
+    <div id="backpack-screen" class="screen-overlay hidden">
+      <div class="backpack-card glassmorphic">
+        <div class="backpack-header">
+          <h3>🎒 SURVIVAL BACKPACK</h3>
+          <span class="cap-indicator"><span id="inv-count">0</span> / 8 SLOTS</span>
+        </div>
+        <div class="backpack-grid" id="inventory-grid">
+          <!-- Populated by JS -->
+        </div>
+        <div class="crafting-panel">
+          <h4>CAMP CRAFTING</h4>
+          <div class="craft-recipes">
+            <button id="btn-craft-torch" class="btn-craft">Craft Torch (2x Wood + 1x Cloth)</button>
+            <button id="btn-craft-campfire" class="btn-craft">Build Campfire (4x Wood + 2x Stone)</button>
+          </div>
+        </div>
+        <p class="backpack-close-hint">Press <b>[TAB]</b> or Click to Close</p>
+      </div>
+    </div>
+
+    <!-- Story Subtitle Bar (Radio broadcast, NPC dialogues, Cutscene lines) -->
+    <div id="story-subtitle-bar" class="hidden">
+      <div class="subtitle-speaker" id="subtitle-speaker">📻 RADIO TRANSMISSION</div>
+      <div class="subtitle-text" id="subtitle-text">"Winter storm is coming. All villagers, move out now."</div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast-container"></div>
+  </div>
+
+  <!-- Evacuation Lore Note Modal -->
+  <div id="note-modal" class="screen-overlay hidden">
+    <div class="note-card">
+      <span class="note-badge" id="note-modal-badge">📜 EVACUATION NOTICE</span>
+      <h3 class="note-title" id="note-modal-title">NOTICE: WE MOVED</h3>
+      <p class="note-body" id="note-modal-body">"All villagers, move out now. Winter storm is coming. Proceed north across the gorge drawbridge towards the Radio Tower."</p>
+      <div class="note-footer">
+        <span class="note-author" id="note-modal-author">Signed: Elder Soren & Village Council</span>
+        <button id="btn-close-note" class="btn-secondary btn-sm" style="padding: 6px 18px; font-size: 0.8rem;">CLOSE [ESC]</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Game Over Screen -->
+  <div id="game-over-screen" class="screen-overlay hidden">
+    <div class="menu-card glassmorphic death-card">
+      <h1 class="death-title">FROZEN IN TIME</h1>
+      <p id="death-reason" class="death-desc">The cold claimed you. Your embers turned to ash.</p>
+      <button id="btn-restart" class="btn-primary">TRY AGAIN</button>
+    </div>
+  </div>
+
+  <!-- Victory Screen -->
+  <div id="victory-screen" class="screen-overlay hidden">
+    <div class="menu-card glassmorphic victory-card">
+      <div class="badge badge-fire">BEACON IGNITED!</div>
+      <h1 class="game-title victory-glow">SIGNAL SENT</h1>
+      <p class="menu-desc">You braved the biting blizzards, conquered the shadow gorge, and ignited the ancient radio tower fire. The rescue helicopters are en route!</p>
+      <button id="btn-victory-replay" class="btn-primary">PLAY AGAIN</button>
+    </div>
+  </div>
+
+  <!-- Cinematic Letterbox & Trailer Overlay -->
+  <div id="cinematic-overlay" class="hidden">
+    <div class="cinematic-bar cinematic-top"></div>
+    <div class="cinematic-content">
+      <div class="cinematic-theme-tag" id="cinematic-tag">THEME I: DESOLATION & THE FROZEN WILD</div>
+      <h2 class="cinematic-main-title" id="cinematic-title">THE LONG DESCENT</h2>
+      <p class="cinematic-sub-title" id="cinematic-desc">Survive the frost. Keep the flame alive.</p>
+      <div class="cinematic-skip-hint" id="cinematic-skip">PRESS [SPACE] OR [ESC] TO SKIP</div>
+    </div>
+    <div class="cinematic-bar cinematic-bottom"></div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

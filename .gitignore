@@ -33,3 +33,8 @@ AssetStoreTools*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+node_modules/
+dist/
+*.zip
+

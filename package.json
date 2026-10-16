@@ -1,0 +1,20 @@
+{
+  "name": "fast-game-dev",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "lucide": "^1.58.0",
+    "three": "^0.186.1",
+    "vite": "^8.3.4"
+  }
+}
