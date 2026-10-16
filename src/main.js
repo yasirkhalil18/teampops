@@ -6,9 +6,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import heightmapUrl from './assets/heightmap.png';
-import groundTexUrl from './assets/ground_color.jpg';
-import rockTexUrl from './assets/rock_color.jpg';
+const heightmapUrl = new URL('./assets/heightmap.png', import.meta.url).href;
+const groundTexUrl = new URL('./assets/ground_color.jpg', import.meta.url).href;
+const rockTexUrl = new URL('./assets/rock_color.jpg', import.meta.url).href;
 
 // ---------------------------------------------------------------------------
 // AUDIO SYSTEM (Procedural Atmosphere & Effects)
@@ -1236,7 +1236,7 @@ const CinematicPostShader = {
   name: 'CinematicPostShader',
   uniforms: {
     tDiffuse: { value: null },
-    resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+    resolution: { value: new THREE.Vector2(typeof window !== 'undefined' ? window.innerWidth : 1920, typeof window !== 'undefined' ? window.innerHeight : 1080) },
     uTime: { value: 0 },
     vignetteStrength: { value: 0.35 }
   },
@@ -2580,6 +2580,7 @@ class ThirdPersonPlayerSystem {
   }
 
   attemptLoadGLB() {
+    if (typeof window === 'undefined' || !window.location) return;
     const loader = new GLTFLoader(globalLoadingManager);
     loader.load(
       './assets/character.glb',
@@ -2958,6 +2959,7 @@ class RealisticSUVSystem {
   }
 
   attemptLoadGLB() {
+    if (typeof window === 'undefined' || !window.location) return;
     const loader = new GLTFLoader(globalLoadingManager);
     loader.load(
       './assets/suv.glb',
@@ -3110,8 +3112,9 @@ class RescueHelicopter {
 // MASTER 3D GAME ENGINE
 // ---------------------------------------------------------------------------
 class FrostboundGame {
-  constructor() {
-    this.container = document.getElementById('game-container');
+  constructor(headless = false) {
+    this.headless = headless || (typeof window === 'undefined');
+    this.container = typeof document !== 'undefined' ? document.getElementById('game-container') : null;
     this.sfx = new SoundEffects();
 
     // Vitals
@@ -3307,13 +3310,20 @@ class FrostboundGame {
     this.lastBeaconAttempt = 0;
     this.hasShownLightHint = false;
 
-    this.initThree();
-    this.buildWorld();
-    this.initMinimap();
-    this.setupEvents();
-    this.updateHUD();
-    this.updateMissionHUD();
-    this.render();
+    if (!this.headless) {
+      this.initThree();
+      this.buildWorld();
+      this.initMinimap();
+      this.setupEvents();
+      this.updateHUD();
+      this.updateMissionHUD();
+      this.render();
+    } else {
+      this.scene = new THREE.Scene();
+      this.camera = new THREE.PerspectiveCamera(75, 1, 0.1, 1400);
+      this.colliders = [];
+      this.buildWorld();
+    }
   }
 
   initThree() {
@@ -4143,27 +4153,22 @@ class FrostboundGame {
     this.scene.add(this.roadBlockadeGroup);
 
     // Physical impassable collider for the rockslide blockade
-    // Use road centerline to compute gap position
-    const blockadeRoad = getRoadSignedDistance(-184, 514);
-    const gapCenterX = blockadeRoad.projX;
-    const gapCenterZ = blockadeRoad.projZ;
-    const gapHalf = 2.0; // 4m gap total
-
-    // Left collider (mountain side of gap)
+    // Across z in [512, 517], road curves from x=-177.5 to x=-174.9
+    // Left collider (mountain cliff side of road corridor)
     this.colliders.push({
       id: 'col_suv_blockade_L',
       type: 'aabb',
       minX: -198,
-      maxX: gapCenterX - gapHalf,
+      maxX: -180.2,
       minZ: 512,
       maxZ: 517
     });
-    // Right collider (ravine side of gap)
+    // Right collider (ravine drop side of road corridor)
     this.colliders.push({
       id: 'col_suv_blockade_R',
       type: 'aabb',
-      minX: gapCenterX + gapHalf,
-      maxX: -170,
+      minX: -171.8,
+      maxX: -155,
       minZ: 512,
       maxZ: 517
     });
@@ -4171,8 +4176,8 @@ class FrostboundGame {
     this.colliders.push({
       id: 'col_suv_blockade',
       type: 'aabb',
-      minX: gapCenterX - gapHalf,
-      maxX: gapCenterX + gapHalf,
+      minX: -180.2,
+      maxX: -171.8,
       minZ: 512,
       maxZ: 517
     });
@@ -5170,6 +5175,7 @@ class FrostboundGame {
 
     // Helper to safely bind GLB meshes to InstancedMeshes with procedural fallback
     const bindGLBToInstanced = (url, instancedMeshes) => {
+      if (typeof window === 'undefined' || !window.location) return;
       gltfLoader.load(
         url,
         (gltf) => {
@@ -5426,6 +5432,7 @@ class FrostboundGame {
     const gltfLoader = new GLTFLoader(globalLoadingManager);
 
     const bindGLBToInstanced = (url, instancedMeshes) => {
+      if (typeof window === 'undefined' || !window.location) return;
       gltfLoader.load(
         url,
         (gltf) => {
@@ -5594,6 +5601,7 @@ class FrostboundGame {
   // INSTANCED GRASS & WILDFLOWERS (Wind Sway & 60m Distance Culling)
   // ---------------------------------------------------------------------------
   buildGrassAndWildflowers() {
+    if (typeof window === 'undefined' || !window.location) return;
     const dummy = new THREE.Object3D();
     const gltfLoader = new GLTFLoader(globalLoadingManager);
 
@@ -9161,8 +9169,10 @@ class FrostboundGame {
   }
 }
 
-window.getTerrainHeight = getTerrainHeight;
-window.getRoadSignedDistance = getRoadSignedDistance;
+if (typeof window !== 'undefined') {
+  window.getTerrainHeight = getTerrainHeight;
+  window.getRoadSignedDistance = getRoadSignedDistance;
+}
 
 // Debug: walk road samples from start to tower, log any blocked sample
 function debugRoadWalk(game) {
@@ -9203,12 +9213,20 @@ function debugRoadWalk(game) {
     console.warn(`[DEBUG ROAD] ${blockedCount} road samples are blocked by colliders.`);
   }
 }
-window.debugRoadWalk = debugRoadWalk;
 
-window.addEventListener('DOMContentLoaded', () => {
-  window.gameInstance = new FrostboundGame();
-  // Run debug road-walk check after world is built
-  setTimeout(() => debugRoadWalk(window.gameInstance), 2000);
-});
+if (typeof window !== 'undefined') {
+  window.debugRoadWalk = debugRoadWalk;
+  window.addEventListener('DOMContentLoaded', () => {
+    window.gameInstance = new FrostboundGame();
+    setTimeout(() => debugRoadWalk(window.gameInstance), 2000);
+  });
+}
 
-export { getTerrainHeight, FrostboundGame };
+export {
+  getTerrainHeight,
+  getRoadSignedDistance,
+  ROAD_WAYPOINTS,
+  ROAD_SAMPLES,
+  ROAD_SAMPLES_COUNT,
+  FrostboundGame
+};
