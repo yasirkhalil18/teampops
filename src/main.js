@@ -6497,7 +6497,7 @@ class FrostboundGame {
     } else if (id === 'generator') {
       this.gates.khaiSecurity = true;
       // Remove the Khai Security Gate collider
-      this.colliders = this.colliders.filter(c => c.id !== 'col_tower_gate');
+      this.colliders = this.colliders.filter(c => c.id !== 'col_khai_security' && c.id !== 'col_tower_gate');
       // Animate gate beam lifting open
       if (this.towerSecurityGateMesh) {
         const startRot = this.towerSecurityGateMesh.rotation.z;
@@ -6578,32 +6578,31 @@ class FrostboundGame {
   }
 
   startSUVIntroCutscene() {
-    // Cutscene skipped: place player directly on the road path at the crash site
-    this.isSUVIntro = false;
+    this.isSUVIntro = true;
+    this.suvIntroTime = 0;
+    this.suvBouldersFallen = false;
     const overlay = document.getElementById('cinematic-overlay');
-    if (overlay) overlay.classList.add('hidden');
+    if (overlay) overlay.classList.remove('hidden');
     const prompt = document.getElementById('interaction-prompt');
     if (prompt) prompt.classList.add('hidden');
 
-    const spawnX = -180.0;
-    const spawnZ = 520.0;
-    const spawnY = getTerrainHeight(spawnX, spawnZ) + 0.5;
-    this.player.position.set(spawnX, spawnY, spawnZ);
-    this.camera.position.set(spawnX, spawnY + 1.6, spawnZ);
-    this.cameraYaw = -0.64;
-    this.cameraPitch = 0;
+    const road = getRoadSignedDistance(-180.0, 552.0);
+    this.suvIntroCenterX = road.projX;
 
-    // Restore first-person arms & torch
-    if (this.fpArms && this.cameraMode === 'first') this.fpArms.root.visible = true;
-    if (this.isTorchOn && this.torchFuel > 0) {
-      if (this.torchLight) this.torchLight.intensity = 2.5;
-      if (this.flameMesh) this.flameMesh.visible = true;
+    const suv = this.wreckedSUV;
+    const startY = getTerrainHeight(this.suvIntroCenterX, 552.0);
+    if (suv) {
+      suv.root.position.set(this.suvIntroCenterX, startY + 0.35, 552.0);
+      suv.root.rotation.set(0, 0, 0);
     }
 
-    this.container.requestPointerLock();
+    // Hide first-person arms & torch during intro
+    if (this.fpArms) this.fpArms.root.visible = false;
+    if (this.torchLight) this.torchLight.intensity = 0;
+    if (this.flameMesh) this.flameMesh.visible = false;
+
     this.sfx.playRadioSpeech("Winter storm is coming. All villagers, move out now.");
     this.showSubtitle("📻 RADIO TRANSMISSION", "Winter storm is coming. All villagers, move out now.", 7.0);
-    this.showToast("The mountain road is blocked! Press [E] near the damaged vehicle trunk to loot survival gear.");
   }
 
   updateSUVIntroCutscene(delta) {
@@ -6615,18 +6614,20 @@ class FrostboundGame {
       // SUV moving forward along road from z = 552 towards z = 518
       const t = Math.min(1.0, this.suvIntroTime / 3.4);
       const curZ = 552.0 - t * 34.0;
-      const curY = getTerrainHeight(carX, curZ);
+      const road = getRoadSignedDistance(carX, curZ);
+      const curX = road.projX;
+      const curY = getTerrainHeight(curX, curZ);
 
       if (suv) {
-        suv.root.position.set(carX, curY + 0.35, curZ);
+        suv.root.position.set(curX, curY + 0.35, curZ);
         suv.update(delta, 16.0);
       }
 
       // Smooth GTA-style 3rd-person chase camera following behind and slightly above the SUV
       const camY = curY + 2.8 + Math.sin(this.suvIntroTime * 18.0) * 0.04;
       const camZ = curZ + 6.8;
-      this.camera.position.set(carX, camY, camZ);
-      this.camera.lookAt(carX, curY + 1.1, curZ - 14.0);
+      this.camera.position.set(curX, camY, camZ);
+      this.camera.lookAt(curX, curY + 1.1, curZ - 14.0);
 
       // Trigger rockslide at t = 2.4s
       if (this.suvIntroTime >= 2.4 && !this.suvBouldersFallen) {
@@ -6638,17 +6639,19 @@ class FrostboundGame {
     } else {
       // SUV stopped at z = 518 (Wrecked against the landslide blockade)
       const stopZ = 518.0;
-      const curY = getTerrainHeight(carX, stopZ);
+      const road = getRoadSignedDistance(carX, stopZ);
+      const curX = road.projX;
+      const curY = getTerrainHeight(curX, stopZ);
 
       if (suv) {
-        suv.root.position.set(carX, curY + 0.35, stopZ);
+        suv.root.position.set(curX, curY + 0.35, stopZ);
         suv.root.rotation.set(0.06, 0.45, 0.12);
         suv.update(delta, 0);
       }
 
       // Dramatic cinematic 3/4 angle overlooking wrecked vehicle and boulders
-      this.camera.position.set(carX - 4.2, curY + 2.2, stopZ + 4.8);
-      this.camera.lookAt(carX, curY + 1.0, stopZ);
+      this.camera.position.set(curX - 4.2, curY + 2.2, stopZ + 4.8);
+      this.camera.lookAt(curX, curY + 1.0, stopZ);
 
       const prompt = document.getElementById('interaction-prompt');
       if (prompt) {
@@ -6667,21 +6670,14 @@ class FrostboundGame {
     const prompt = document.getElementById('interaction-prompt');
     if (prompt) prompt.classList.add('hidden');
 
-    // Place player on flat road ground near the SUV
-    const carX = this.suvIntroCenterX || -180.0;
-    const road = getRoadSignedDistance(carX - 2.0, 517.5);
-    let exitX = road.projX;
-    let exitZ = road.projZ;
-    let exitY = getTerrainHeight(exitX, exitZ) + 0.5;
-    // ensureWalkable will adjust if needed
-    const walkable = this.ensureWalkable(new THREE.Vector3(exitX, exitY, exitZ));
-    exitX = walkable.x;
-    exitZ = walkable.z;
-    exitY = walkable.y;
-    this.player.position.set(exitX, exitY, exitZ);
-    this.camera.position.set(exitX, exitY + 1.1, exitZ);
+    // Place player on flat road ground (|signedDist|<2, grade<0.3), at least 3m from every collider
+    const safeTarget = new THREE.Vector3(-180.0, getTerrainHeight(-180.0, 524.0) + 0.5, 524.0);
+    const walkable = this.ensureWalkable(safeTarget);
+    this.player.position.copy(walkable);
+    this.camera.position.set(walkable.x, walkable.y + 1.6, walkable.z);
     this.cameraYaw = -0.64;
     this.cameraPitch = 0;
+    this.lastSafePosition = walkable.clone();
 
     // Restore first-person arms & torch
     if (this.fpArms && this.cameraMode === 'first') this.fpArms.root.visible = true;
@@ -7106,14 +7102,16 @@ class FrostboundGame {
     const extZ = Math.abs(hw * sinA) + Math.abs(hd * cosA);
 
     this.towerGateCollider = {
-      id: 'col_tower_gate',
+      id: 'col_khai_security',
       type: 'aabb',
       minX: gateX - extX,
       maxX: gateX + extX,
       minZ: gateZ - extZ,
       maxZ: gateZ + extZ
     };
-    this.colliders.push(this.towerGateCollider);
+    if (!this.gates.khaiSecurity) {
+      this.colliders.push(this.towerGateCollider);
+    }
   }
 
   buildSignalFirePyres() {
@@ -7322,6 +7320,11 @@ class FrostboundGame {
     });
 
     document.getElementById('btn-start').addEventListener('click', () => this.startGame());
+
+    const btnFs = document.getElementById('btn-fullscreen');
+    if (btnFs) {
+      btnFs.addEventListener('click', () => this.toggleFullscreen());
+    }
 
     const btnTrailer = document.getElementById('btn-trailer');
     if (btnTrailer) {
@@ -7729,19 +7732,7 @@ class FrostboundGame {
   // Ensure position is walkable: not inside any collider, not on steep slope
   ensureWalkable(pos) {
     const maxGrade = 0.3;
-    const playerRadius = 0.55;
     const minColliderDist = 3.0;
-
-    // Check if position is on flat road ground
-    const road = getRoadSignedDistance(pos.x, pos.z);
-    const eps = 0.25;
-    const hL = getTerrainHeight(pos.x - eps, pos.z);
-    const hR = getTerrainHeight(pos.x + eps, pos.z);
-    const hD = getTerrainHeight(pos.x, pos.z - eps);
-    const hU = getTerrainHeight(pos.x, pos.z + eps);
-    const dhdx = (hR - hL) / (2 * eps);
-    const dhdz = (hU - hD) / (2 * eps);
-    const grade = Math.hypot(dhdx, dhdz);
 
     const isInsideCollider = (px, pz) => {
       if (!this.colliders) return false;
@@ -7753,8 +7744,10 @@ class FrostboundGame {
           const distZ = pz - closestZ;
           if (distX * distX + distZ * distZ < minColliderDist * minColliderDist) return true;
         } else if (col.type === 'sphere') {
-          const dx = px - col.center.x;
-          const dz = pz - col.center.y;
+          const cx = col.center.x;
+          const cz = col.center.z !== undefined ? col.center.z : col.center.y;
+          const dx = px - cx;
+          const dz = pz - cz;
           const minDist = col.radius + minColliderDist;
           if (dx * dx + dz * dz < minDist * minDist) return true;
         }
@@ -7762,7 +7755,21 @@ class FrostboundGame {
       return false;
     };
 
-    // If current position is valid, return it
+    const getGrade = (px, pz) => {
+      const eps = 0.25;
+      const hL = getTerrainHeight(px - eps, pz);
+      const hR = getTerrainHeight(px + eps, pz);
+      const hD = getTerrainHeight(px, pz - eps);
+      const hU = getTerrainHeight(px, pz + eps);
+      const dhdx = (hR - hL) / (2 * eps);
+      const dhdz = (hU - hD) / (2 * eps);
+      return Math.hypot(dhdx, dhdz);
+    };
+
+    const road = getRoadSignedDistance(pos.x, pos.z);
+    const grade = getGrade(pos.x, pos.z);
+
+    // If current position is flat road ground (|signedDist| < 2.0, grade < maxGrade) and not within 3m of any collider
     if (Math.abs(road.signedDist) < 2.0 && grade < maxGrade && !isInsideCollider(pos.x, pos.z)) {
       pos.y = getTerrainHeight(pos.x, pos.z) + 0.5;
       return pos;
@@ -7771,17 +7778,11 @@ class FrostboundGame {
     // Push to nearest valid road point
     let bestDist = Infinity;
     let bestPt = null;
-    for (let i = 0; i < ROAD_SAMPLES_COUNT; i += 4) {
+    for (let i = 0; i < ROAD_SAMPLES_COUNT; i += 2) {
       const s = ROAD_SAMPLES[i];
       const dSq = (pos.x - s.x) * (pos.x - s.x) + (pos.z - s.z) * (pos.z - s.z);
       if (dSq < bestDist) {
-        // Check this road sample is walkable
-        const sEps = 0.25;
-        const shL = getTerrainHeight(s.x - sEps, s.z);
-        const shR = getTerrainHeight(s.x + sEps, s.z);
-        const shD = getTerrainHeight(s.x, s.z - sEps);
-        const shU = getTerrainHeight(s.x, s.z + sEps);
-        const sGrade = Math.hypot((shR - shL) / (2 * sEps), (shU - shD) / (2 * sEps));
+        const sGrade = getGrade(s.x, s.z);
         if (sGrade < maxGrade && !isInsideCollider(s.x, s.z)) {
           bestDist = dSq;
           bestPt = s;
@@ -8533,6 +8534,7 @@ class FrostboundGame {
     }
 
     // 5. SOLID COLLISION CHECK — resolve X and Z independently for wall sliding
+    // 5. SOLID COLLISION CHECK — resolve X and Z separately so the player slides along walls
     const playerRadius = 0.55;
 
     const checkCollision = (testX, testZ) => {
@@ -8546,8 +8548,10 @@ class FrostboundGame {
           const distZ = testZ - closestZ;
           if (distX * distX + distZ * distZ < playerRadius * playerRadius) return true;
         } else if (col.type === 'sphere') {
-          const distX = testX - col.center.x;
-          const distZ = testZ - col.center.y;
+          const cx = col.center.x;
+          const cz = col.center.z !== undefined ? col.center.z : col.center.y;
+          const distX = testX - cx;
+          const distZ = testZ - cz;
           const minDist = col.radius + playerRadius;
           if (distX * distX + distZ * distZ < minDist * minDist) return true;
         }
@@ -8555,23 +8559,19 @@ class FrostboundGame {
       return false;
     };
 
-    const nextPosX = px + moveX * delta;
-    const nextPosZ = pz + moveZ * delta;
+    let nextPosX = px;
+    let nextPosZ = pz;
+    if (moveX !== 0 && !checkCollision(px + moveX * delta, pz)) {
+      nextPosX = px + moveX * delta;
+    }
+    if (moveZ !== 0 && !checkCollision(nextPosX, pz + moveZ * delta)) {
+      nextPosZ = pz + moveZ * delta;
+    } else if (moveZ !== 0 && !checkCollision(px, pz + moveZ * delta)) {
+      nextPosZ = pz + moveZ * delta;
+    }
 
-    // Try moving both X and Z
-    if (!checkCollision(nextPosX, nextPosZ)) {
-      this.player.position.x = nextPosX;
-      this.player.position.z = nextPosZ;
-    }
-    // Try X only (slide along Z walls)
-    else if (!checkCollision(nextPosX, pz)) {
-      this.player.position.x = nextPosX;
-    }
-    // Try Z only (slide along X walls)
-    else if (!checkCollision(px, nextPosZ)) {
-      this.player.position.z = nextPosZ;
-    }
-    // Fully blocked: don't move
+    this.player.position.x = nextPosX;
+    this.player.position.z = nextPosZ;
 
     // Track last safe position (on flat road ground, updated every ~1s)
     this.lastSafePositionTimer = (this.lastSafePositionTimer || 0) + delta;

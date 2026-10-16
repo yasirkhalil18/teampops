@@ -1245,3 +1245,34 @@ body, html {
   color: #f87171;
   border: 1px solid rgba(239, 68, 68, 0.4);
 }
+
+/* Top-Right Fullscreen Toggle Button */
+.fullscreen-btn {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 9999;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  cursor: pointer;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #f1f5f9;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: all 0.2s ease;
+  pointer-events: auto;
+}
+
+.fullscreen-btn:hover {
+  background: rgba(30, 41, 59, 0.95);
+  border-color: #38bdf8;
+  color: #38bdf8;
+  transform: scale(1.06);
+}
+
