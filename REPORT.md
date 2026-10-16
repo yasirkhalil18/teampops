@@ -116,9 +116,29 @@ During in-browser live testing via browser subagent, three subtle runtime/shader
    - Added `isColor` type guards on `this.scene.background` when updating fog and sunset colors in `updateSimulation()`, preventing runtime errors when an HDR environment `DataTexture` is assigned as the scene background.
 
 ### In-Browser Verification Results
-- **URL Tested:** `http://localhost:5174/`
+- **URL Tested:** `http://localhost:5173/` & `http://localhost:5174/`
 - **Loading Screen:** Progresses cleanly to 100% and smoothly fades out.
 - **Console Log State:** 0 shader compilation errors, 0 runtime exceptions.
 - **Visuals & Rendering:** 3D scene renders cleanly with no black screen (alpine terrain, mountain ranges, procedural snow particles, road spline, SUV, atmospheric lighting, and sky).
 - **HUD & Systems:** Live Ember Clock (`DAY 1`), survival gauges, inventory, objective markers, and movement (`WASD`) confirmed 100% active and playable.
+
+---
+
+## HUD Overhaul & Visual Clutter Reduction
+In response to user feedback regarding screen clutter and immersion:
+1. **Top Bar Cleaned & Relocated to Top-Right:**
+   - Moved the Ember Clock widget to the top-right corner.
+   - Merged weather status directly into the Ember Clock header (`DAY 1 | 17:30 • LIGHT SNOW`).
+   - Removed the separate `Light Snow`, `1st Person [V]`, and `Post-FX [P]` floating pill widgets from the screen to eliminate visual noise.
+2. **Key [T] Objectives / Task Panel:**
+   - Hidden the large Story Chapters task box by default.
+   - Added a sleek, subtle `[T] OBJECTIVES` prompt badge directly below the Ember Clock.
+   - Pressing `T` (or clicking the badge) toggles the task panel smoothly; pressing `T` or `Escape` closes it.
+3. **Map Radar / Fullscreen Map Cleaned:**
+   - Completely removed the large locked radar map widget from the top-right corner.
+   - Disabled key `M` opening the map modal to keep the gameplay focused and clean.
+4. **Emoji Removal & Typography Polish:**
+   - Stripped emojis from buttons, badges, and chapter lists across the main menu and HUD (`FIRE`, `SHADOW`, `TIME`, `[CH 1]`, `[CH 2]`, `[X]`, `[>]`, `[ ]`).
+   - Retained the bottom-right torch slot `[F] Torched Pine` as requested.
+
 
