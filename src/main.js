@@ -1358,7 +1358,7 @@ function createWaterMaterial() {
       vec3 wN1 = texture2D(uWaterNor, wUv1).xyz * 2.0 - 1.0;
       vec3 wN2 = texture2D(uWaterNor, wUv2).xyz * 2.0 - 1.0;
       vec3 wNormal = normalize(vec3(wN1.xy + wN2.xy, 1.0));
-      normal = normalize(normalMatrix * wNormal);
+      normal = normalize(normal + vec3(wN1.x + wN2.x, wN1.y + wN2.y, 0.0) * 0.25);
       `
     );
     shader.fragmentShader = shader.fragmentShader.replace(
@@ -4065,14 +4065,16 @@ class FrostboundGame {
         '#include <color_fragment>',
         `
         #include <color_fragment>
+        #if defined( USE_MAP )
         // Dual tire tracks at u ~ 0.28 and u ~ 0.72
-        float distTrack1 = abs(vUv.x - 0.28);
-        float distTrack2 = abs(vUv.x - 0.72);
+        float distTrack1 = abs(vMapUv.x - 0.28);
+        float distTrack2 = abs(vMapUv.x - 0.72);
         float track1 = 1.0 - smoothstep(0.04, 0.12, distTrack1);
         float track2 = 1.0 - smoothstep(0.04, 0.12, distTrack2);
         float trackMud = max(track1, track2);
         // Darken compressed wet tire treads in dirt/gravel
         diffuseColor.rgb *= (1.0 - trackMud * 0.38);
+        #endif
         `
       );
     };
@@ -8259,7 +8261,7 @@ class FrostboundGame {
 
     if (isNight) {
       const nightFog = new THREE.Color(0x0a121e);
-      this.scene.background.setHex(0x0a121e);
+      if (this.scene.background && this.scene.background.isColor) this.scene.background.setHex(0x0a121e);
       this.scene.fog.color.copy(nightFog);
       this.skyMesh.material.color.setHex(0x08101a);
       this.sunOrb.material.color.setHex(0xd0e8ff); // Moon glow
@@ -8277,7 +8279,7 @@ class FrostboundGame {
         const sunsetFog = new THREE.Color(0x6e5262); // Soft sunset mauve
         const sunsetSky = new THREE.Color(0x7c5a6d); // Warm twilight sky
         const finalFog = targetFogColor.clone().lerp(sunsetFog, sunsetBlend * 0.82);
-        this.scene.background.copy(finalFog);
+        if (this.scene.background && this.scene.background.isColor) this.scene.background.copy(finalFog);
         this.scene.fog.color.copy(finalFog);
         this.scene.fog.density = targetFogDensity * (1.0 - sunsetBlend * 0.08);
         this.skyMesh.material.color.copy(sunsetSky);
@@ -8288,7 +8290,7 @@ class FrostboundGame {
         this.ambientLight.intensity = 0.65;
         this.sunLight.intensity = Math.max(0.6, dayFactor * 1.85);
       } else {
-        this.scene.background.copy(targetFogColor);
+        if (this.scene.background && this.scene.background.isColor) this.scene.background.copy(targetFogColor);
         this.scene.fog.color.copy(targetFogColor);
         this.scene.fog.density = targetFogDensity;
         this.skyMesh.material.color.copy(targetFogColor).offsetHSL(0.02, 0.05, 0.05);
