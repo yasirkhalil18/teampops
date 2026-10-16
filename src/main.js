@@ -769,6 +769,65 @@ function initHeightmap(onLoaded) {
 initHeightmap();
 
 // ---------------------------------------------------------------------------
+// GLOBAL THREE.LOADINGMANAGER FOR SEAMLESS LOADING SCREEN EXPERIENCE
+// ---------------------------------------------------------------------------
+const globalLoadingManager = new THREE.LoadingManager();
+
+function initLoadingScreen() {
+  const loadingScreen = document.getElementById('loading-screen');
+  const loadingBar = document.getElementById('loading-bar');
+  const loadingPct = document.getElementById('loading-percentage');
+  const loadingAsset = document.getElementById('loading-asset');
+
+  let hasFinished = false;
+  const finishLoading = () => {
+    if (hasFinished) return;
+    hasFinished = true;
+    if (loadingBar) loadingBar.style.width = '100%';
+    if (loadingPct) loadingPct.textContent = '100%';
+    if (loadingAsset) loadingAsset.textContent = 'Ready for Survival';
+    setTimeout(() => {
+      if (loadingScreen) {
+        loadingScreen.classList.add('fade-out');
+        setTimeout(() => {
+          if (loadingScreen.parentNode) loadingScreen.remove();
+        }, 850);
+      }
+    }, 450);
+  };
+
+  globalLoadingManager.onProgress = (url, itemsLoaded, itemsTotal) => {
+    const pct = Math.round((itemsLoaded / itemsTotal) * 100);
+    if (loadingBar) loadingBar.style.width = `${pct}%`;
+    if (loadingPct) loadingPct.textContent = `${pct}%`;
+    if (loadingAsset) {
+      const fileName = url.split('/').pop().split('?')[0];
+      loadingAsset.textContent = `Loading ${fileName}...`;
+    }
+  };
+
+  globalLoadingManager.onLoad = () => {
+    finishLoading();
+  };
+
+  globalLoadingManager.onError = (url) => {
+    console.warn('[LoadingManager] Non-fatal load warning:', url);
+  };
+
+  // Safety fallback: ensure loading screen gracefully fades out within 3.5s
+  setTimeout(finishLoading, 3500);
+}
+
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initLoadingScreen);
+  } else {
+    initLoadingScreen();
+  }
+}
+
+
+// ---------------------------------------------------------------------------
 // ROAD PATH DEFINITION (1728m Winding Route Connecting 5 Distinct Zones)
 // ---------------------------------------------------------------------------
 const ROAD_WAYPOINTS = [
@@ -1243,7 +1302,7 @@ const CinematicPostShader = {
 // ANIMATED WATER MATERIAL (Scrolling Normal Map & Shoreline Foam)
 // ---------------------------------------------------------------------------
 function createWaterMaterial() {
-  const texLoader = new THREE.TextureLoader();
+  const texLoader = new THREE.TextureLoader(globalLoadingManager);
   const waterNor = texLoader.load('./assets/textures/rock_nor.jpg');
   waterNor.wrapS = THREE.RepeatWrapping;
   waterNor.wrapT = THREE.RepeatWrapping;
@@ -1322,7 +1381,7 @@ function createWaterMaterial() {
 // PBR SPLAT TERRAIN MATERIAL (Poly Haven Grass, Dirt, Rock, Snow Blended by Height, Slope & Noise)
 // ---------------------------------------------------------------------------
 function createPBRTerrainMaterial() {
-  const texLoader = new THREE.TextureLoader();
+  const texLoader = new THREE.TextureLoader(globalLoadingManager);
   const loadWrapTex = (url, rep = 45) => {
     const t = texLoader.load(url);
     t.wrapS = THREE.RepeatWrapping;
@@ -2521,7 +2580,7 @@ class ThirdPersonPlayerSystem {
   }
 
   attemptLoadGLB() {
-    const loader = new GLTFLoader();
+    const loader = new GLTFLoader(globalLoadingManager);
     loader.load(
       './assets/character.glb',
       (gltf) => {
@@ -2899,7 +2958,7 @@ class RealisticSUVSystem {
   }
 
   attemptLoadGLB() {
-    const loader = new GLTFLoader();
+    const loader = new GLTFLoader(globalLoadingManager);
     loader.load(
       './assets/suv.glb',
       (gltf) => {
@@ -3378,7 +3437,7 @@ class FrostboundGame {
   }
 
   initHDRI() {
-    this.rgbeLoader = new RGBELoader();
+    this.rgbeLoader = new RGBELoader(globalLoadingManager);
     this.pmremGenerator = new THREE.PMREMGenerator(this.renderer);
     this.pmremGenerator.compileEquirectangularShader();
 
@@ -3629,7 +3688,7 @@ class FrostboundGame {
   }
 
   buildMountainRanges() {
-    const texLoader = new THREE.TextureLoader();
+    const texLoader = new THREE.TextureLoader(globalLoadingManager);
     const rockTexture = texLoader.load(rockTexUrl);
     rockTexture.wrapS = THREE.RepeatWrapping;
     rockTexture.wrapT = THREE.RepeatWrapping;
@@ -3950,7 +4009,7 @@ class FrostboundGame {
     roadGeom.setIndex(indices);
     roadGeom.computeVertexNormals();
 
-    const texLoader = new THREE.TextureLoader();
+    const texLoader = new THREE.TextureLoader(globalLoadingManager);
     const dirtDiff = texLoader.load('./assets/textures/dirt_diff.jpg');
     dirtDiff.wrapS = THREE.RepeatWrapping;
     dirtDiff.wrapT = THREE.RepeatWrapping;
@@ -5086,7 +5145,7 @@ class FrostboundGame {
   // ---------------------------------------------------------------------------
   populateNature() {
     const dummy = new THREE.Object3D();
-    const gltfLoader = new GLTFLoader();
+    const gltfLoader = new GLTFLoader(globalLoadingManager);
 
     // Helper to safely bind GLB meshes to InstancedMeshes with procedural fallback
     const bindGLBToInstanced = (url, instancedMeshes) => {
@@ -5343,7 +5402,7 @@ class FrostboundGame {
   // ---------------------------------------------------------------------------
   buildProps() {
     const dummy = new THREE.Object3D();
-    const gltfLoader = new GLTFLoader();
+    const gltfLoader = new GLTFLoader(globalLoadingManager);
 
     const bindGLBToInstanced = (url, instancedMeshes) => {
       gltfLoader.load(
@@ -5515,7 +5574,7 @@ class FrostboundGame {
   // ---------------------------------------------------------------------------
   buildGrassAndWildflowers() {
     const dummy = new THREE.Object3D();
-    const gltfLoader = new GLTFLoader();
+    const gltfLoader = new GLTFLoader(globalLoadingManager);
 
     // Wind sway & camera distance culling shader extension
     const hookWindAndCullShader = (mat) => {

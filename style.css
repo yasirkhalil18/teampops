@@ -1276,3 +1276,95 @@ body, html {
   transform: scale(1.06);
 }
 
+/* Loading Screen Experience */
+#loading-screen {
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at center, #0f172a 0%, #020617 100%);
+  transition: opacity 0.8s ease, visibility 0.8s ease;
+}
+
+#loading-screen.fade-out {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.loading-container {
+  width: min(90vw, 460px);
+  padding: 36px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  text-align: center;
+}
+
+.loading-logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.loading-icon {
+  font-size: 2.5rem;
+  animation: pulse-ice 2s ease-in-out infinite;
+}
+
+@keyframes pulse-ice {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.4)); }
+  50% { transform: scale(1.1); filter: drop-shadow(0 0 18px rgba(56, 189, 248, 0.8)); }
+}
+
+.loading-title {
+  font-family: 'Cinzel', serif;
+  font-size: 1.8rem;
+  letter-spacing: 4px;
+  color: #f8fafc;
+  margin: 0;
+}
+
+.loading-subtitle {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 2px;
+  color: #38bdf8;
+}
+
+.loading-bar-wrap {
+  width: 100%;
+  height: 8px;
+  background: rgba(15, 23, 42, 0.8);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+.loading-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #0284c7, #38bdf8, #a855f7);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
+  transition: width 0.25s ease-out;
+  border-radius: 999px;
+}
+
+.loading-status {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+#loading-percentage {
+  color: #38bdf8;
+  font-weight: 700;
+}
+
+
