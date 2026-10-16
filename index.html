@@ -42,9 +42,9 @@
   <div id="main-menu" class="screen-overlay">
     <div class="menu-card glassmorphic">
       <div class="jam-badges">
-        <span class="badge badge-fire">🔥 FIRE</span>
-        <span class="badge badge-shadow">🌑 SHADOW</span>
-        <span class="badge badge-time">⏳ TIME</span>
+        <span class="badge badge-fire">FIRE</span>
+        <span class="badge badge-shadow">SHADOW</span>
+        <span class="badge badge-time">TIME</span>
       </div>
       <h1 class="game-title">FROSTBOUND</h1>
       <h2 class="game-subtitle">THE LONG DESCENT</h2>
@@ -52,7 +52,7 @@
       
       <div class="menu-actions">
         <button id="btn-start" class="btn-primary">SURVIVE THE NIGHT</button>
-        <button id="btn-trailer" class="btn-secondary" style="border-color: #f59e0b; color: #f59e0b;">🎬 60S TRAILER MODE [T]</button>
+        <button id="btn-trailer" class="btn-secondary" style="border-color: #f59e0b; color: #f59e0b;">CINEMATIC TRAILER</button>
         <button id="btn-how" class="btn-secondary">CONTROLS & SURVIVAL GUIDE</button>
       </div>
 
@@ -69,8 +69,7 @@
       <div class="guide-grid">
         <div class="guide-item"><span class="key">W A S D</span> Walk & Strafe</div>
         <div class="guide-item"><span class="key">SPACE</span> Jump (Obstacles & Gaps)</div>
-        <div class="guide-item"><span class="key">M</span> Fullscreen Map (Unlock via Cabin)</div>
-        <div class="guide-item"><span class="key">T</span> 60s Cinematic Trailer Mode</div>
+        <div class="guide-item"><span class="key">T</span> Objectives & Story Tasks</div>
         <div class="guide-item"><span class="key">V</span> Toggle 1st / 3rd Person View</div>
         <div class="guide-item"><span class="key">P</span> Toggle Post-Processing (FX ON/OFF)</div>
         <div class="guide-item"><span class="key">G</span> Toggle Fullscreen Mode</div>
@@ -91,8 +90,7 @@
       </div>
       <div style="display: flex; gap: 10px; justify-content: center; margin-top: 14px; flex-wrap: wrap;">
         <button id="btn-close-how" class="btn-secondary">GOT IT</button>
-        <button id="btn-open-credits" class="btn-secondary" style="font-size: 0.72rem; border-color: #f59e0b; color: #f59e0b;">📜 VIEW FULL CREDITS</button>
-        <button id="btn-test-map" class="btn-secondary" style="font-size: 0.72rem; opacity: 0.85; border-color: #38bdf8; color: #38bdf8;">🗺️ TEST: EQUIP CABIN MAP</button>
+        <button id="btn-open-credits" class="btn-secondary" style="font-size: 0.72rem; border-color: #f59e0b; color: #f59e0b;">VIEW FULL CREDITS</button>
       </div>
     </div>
   </div>
@@ -129,60 +127,40 @@
 
   <!-- In-Game HUD -->
   <div id="hud" class="hidden">
-    <!-- Top Bar: Time, Compass, Weather -->
+    <!-- Top Bar: Time, Weather & Tasks (Top-Right) -->
     <div class="hud-top">
+      <!-- Ember Clock & Weather Widget -->
       <div class="time-widget glassmorphic-sm" id="ember-clock">
-        <div class="clock-icon" id="clock-icon">☀️</div>
         <div class="time-info">
-          <div class="clock-label" style="font-size: 0.65rem; color: #f59e0b; font-weight: 700; letter-spacing: 1px;">EMBER CLOCK</div>
-          <div style="display: flex; gap: 8px; align-items: baseline;">
+          <div class="clock-label">EMBER CLOCK</div>
+          <div class="time-main-row">
             <span id="day-counter">DAY 1</span>
-            <span id="time-display" style="font-size: 1.15rem; font-weight: 700; color: #f8fafc;">17:30</span>
+            <span class="hud-sep">|</span>
+            <span id="time-display">17:30</span>
+            <span class="hud-dot">•</span>
+            <span id="weather-text">LIGHT SNOW</span>
           </div>
-          <span id="dusk-deadline-badge" class="dusk-badge">⏳ CHAPTER 1 DUSK: 19:00</span>
+          <span id="dusk-deadline-badge" class="dusk-badge">CHAPTER 1 DUSK: 19:00</span>
         </div>
       </div>
 
-      <div class="weather-widget glassmorphic-sm">
-        <span id="weather-icon">❄️</span>
-        <span id="weather-desc">LIGHT SNOW</span>
+      <!-- Tasks Toggle Prompt Badge (Press T to view) -->
+      <div id="btn-toggle-tasks" class="task-prompt-badge glassmorphic-sm" title="Press T to view tasks">
+        <span class="task-key">[T]</span>
+        <span class="task-prompt-label">OBJECTIVES</span>
       </div>
 
-      <div class="weather-widget glassmorphic-sm" id="camera-mode-widget" style="cursor: pointer;" title="Press V to toggle camera view">
-        <span id="camera-icon">📷</span>
-        <span id="camera-mode-desc">1ST PERSON [V]</span>
-      </div>
-
-      <div class="weather-widget glassmorphic-sm" id="postproc-widget" style="cursor: pointer;" title="Press P to toggle Post-Processing">
-        <span id="postproc-icon">✨</span>
-        <span id="postproc-desc">POST-FX: ON [P]</span>
-      </div>
-
-      <!-- Expedition Mission Tracker Widget -->
-      <div class="mission-tracker-widget glassmorphic-sm" id="mission-tracker-widget">
+      <!-- Expedition Mission Tracker Widget (Hidden by default, toggled with T) -->
+      <div class="mission-tracker-widget glassmorphic-sm hidden" id="mission-tracker-widget">
         <div class="mission-tracker-header" id="mission-tracker-header">
           <div class="mission-header-title-wrap">
-            <span class="mission-header-icon">📋</span>
             <span class="mission-header-title">STORY CHAPTERS</span>
             <span id="missions-counter-badge" class="badge badge-missions">0/8 DONE</span>
           </div>
-          <span class="map-hint-badge" id="btn-open-map-hint" title="Press M to view Map">[M] MAP</span>
+          <span class="close-tasks-btn" id="btn-close-tasks" title="Close [T]">✕</span>
         </div>
         <div class="mission-list" id="mission-list">
           <!-- Populated dynamically by JS -->
-        </div>
-      </div>
-
-      <!-- Minimap Radar (Locked until Map item acquired from Cabin) -->
-      <div class="minimap-widget glassmorphic-sm" id="minimap-widget">
-        <div id="minimap-locked-content" class="minimap-locked-box">
-          <span class="locked-icon">🔒</span>
-          <span class="locked-label">MAP LOCKED</span>
-          <span class="locked-sub">Search Cabin in Zone 4</span>
-        </div>
-        <div id="minimap-unlocked-content" class="hidden">
-          <canvas id="minimap-canvas" width="110" height="110"></canvas>
-          <span class="minimap-label">RADAR MAP [M]</span>
         </div>
       </div>
     </div>
@@ -252,9 +230,10 @@
         </div>
       </div>
       <div class="quick-hints">
-        <span class="hint-key">[M]</span> Map
+        <span class="hint-key">[T]</span> Tasks
         <span class="hint-key">[TAB]</span> Bag
-        <span class="hint-key">[Z]</span> Sleep
+        <span class="hint-key">[V]</span> View
+        <span class="hint-key">[Z]</span> Rest
         <span class="hint-key">[L-Click]</span> Attack
       </div>
     </div>

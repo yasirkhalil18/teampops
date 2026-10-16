@@ -3143,6 +3143,7 @@ class FrostboundGame {
     // Map & Fullscreen Map System (Unlocked via Cabin Map Item)
     this.hasMap = false;
     this.isMapOpen = false;
+    this.isTaskPanelOpen = false;
     this.signalFiresLit = 0;
 
     // Linear Story & Mission System: 8 Sequential Missions with Physical Gates
@@ -6493,6 +6494,22 @@ class FrostboundGame {
     `).join('');
   }
 
+  toggleTaskPanel() {
+    this.isTaskPanelOpen = !this.isTaskPanelOpen;
+    const panel = document.getElementById('mission-tracker-widget');
+    const badge = document.getElementById('btn-toggle-tasks');
+    if (panel) {
+      if (this.isTaskPanelOpen) {
+        panel.classList.remove('hidden');
+        if (badge) badge.classList.add('active');
+        this.updateMissionHUD();
+      } else {
+        panel.classList.add('hidden');
+        if (badge) badge.classList.remove('active');
+      }
+    }
+  }
+
   updateMissionHUD() {
     const counterBadge = document.getElementById('missions-counter-badge');
     const completedCount = this.getCompletedMissionCount();
@@ -6508,12 +6525,12 @@ class FrostboundGame {
       if (m.id === 'village_bridge') {
         progressText = ` (${this.villagePartsCollected}/3 Parts)`;
       } else if (m.id === 'meadow_sustenance') {
-        progressText = ` (Food ${Math.min(3, this.foodCollected)}/3, Water ${this.hasWater ? '✓' : '✗'})`;
+        progressText = ` (Food ${Math.min(3, this.foodCollected)}/3, Water ${this.hasWater ? 'DONE' : 'NEEDED'})`;
       }
       return `
         <div class="mission-item ${isDone ? 'completed' : (isActive ? 'active' : 'locked')}">
-          <span class="mission-check ${isDone ? 'done' : ''}">${isDone ? '✓' : (isActive ? '▶' : '🔒')}</span>
-          <span class="mission-name">${m.icon} ${m.title}${progressText}</span>
+          <span class="mission-check ${isDone ? 'done' : ''}">${isDone ? '[X]' : (isActive ? '[>]' : '[ ]')}</span>
+          <span class="mission-name">${m.chapter}: ${m.title}${progressText}</span>
           <span class="mission-zone-tag">[${m.zone.split(':')[0]}]</span>
           <span class="mission-badge-status ${isDone ? 'done' : (isActive ? 'pending' : 'locked')}">${isDone ? 'DONE' : (isActive ? 'ACTIVE' : 'LOCKED')}</span>
         </div>
@@ -7326,10 +7343,10 @@ class FrostboundGame {
     window.addEventListener('keydown', (e) => {
       this.keys[e.code] = true;
 
-      // 60-second Trailer Mode Key (T)
+      // Objectives / Tasks Panel Toggle Key (T)
       if (e.code === 'KeyT') {
         e.preventDefault();
-        this.toggleTrailerMode();
+        this.toggleTaskPanel();
         return;
       }
 
@@ -7348,13 +7365,9 @@ class FrostboundGame {
         e.preventDefault();
         this.toggleBackpack();
       }
-      if (e.code === 'KeyM') {
-        e.preventDefault();
-        this.toggleMapModal();
-      }
       if (e.code === 'Escape') {
-        if (this.isNoteOpen) this.closeNoteModal();
-        else if (this.isMapOpen) this.toggleMapModal();
+        if (this.isTaskPanelOpen) this.toggleTaskPanel();
+        else if (this.isNoteOpen) this.closeNoteModal();
         else if (this.isBackpackOpen) this.toggleBackpack();
       }
       if (e.code === 'KeyF') {
@@ -7458,15 +7471,10 @@ class FrostboundGame {
     document.getElementById('btn-restart').addEventListener('click', () => location.reload());
     document.getElementById('btn-victory-replay').addEventListener('click', () => location.reload());
 
-    const closeMapBtn = document.getElementById('btn-close-map');
-    if (closeMapBtn) closeMapBtn.addEventListener('click', () => this.toggleMapModal());
-    const openMapHint = document.getElementById('btn-open-map-hint');
-    if (openMapHint) openMapHint.addEventListener('click', () => this.toggleMapModal());
-    if (this.minimapCanvas) {
-      this.minimapCanvas.addEventListener('click', () => {
-        if (this.hasMap) this.toggleMapModal();
-      });
-    }
+    const toggleTasksBtn = document.getElementById('btn-toggle-tasks');
+    if (toggleTasksBtn) toggleTasksBtn.addEventListener('click', () => this.toggleTaskPanel());
+    const closeTasksBtn = document.getElementById('btn-close-tasks');
+    if (closeTasksBtn) closeTasksBtn.addEventListener('click', () => this.toggleTaskPanel());
 
     const btnCloseNote = document.getElementById('btn-close-note');
     if (btnCloseNote) {
@@ -8307,35 +8315,38 @@ class FrostboundGame {
       this.windmillBlades.rotation.z += delta * 0.75;
     }
 
-    // Visible Clock & Active Chapter Dusk Deadline
+    // Visible Clock, Weather & Active Chapter Dusk Deadline
     const hours = Math.floor(this.timeOfDay);
     const mins = Math.floor((this.timeOfDay % 1) * 60);
     const timeStr = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
     const timeElem = document.getElementById('time-display');
     if (timeElem) timeElem.textContent = timeStr;
-    const clockIcon = document.getElementById('clock-icon');
-    if (clockIcon) clockIcon.textContent = isNight ? '🌙' : '☀️';
+
+    const weatherElem = document.getElementById('weather-text');
+    if (weatherElem) {
+      weatherElem.textContent = this.weather === 'blizzard' ? 'BLIZZARD' : (this.weather === 'snow' ? 'SNOWFALL' : 'LIGHT SNOW');
+    }
 
     // Current Chapter Dusk Deadline Alert
     const activeMission = this.missions.find(m => !m.completed);
     const deadlineBadge = document.getElementById('dusk-deadline-badge');
     if (deadlineBadge) {
       if (!activeMission) {
-        deadlineBadge.textContent = '🌟 ALL MISSIONS DONE';
+        deadlineBadge.textContent = 'ALL MISSIONS COMPLETED';
         deadlineBadge.className = 'dusk-badge ready';
       } else {
-        const dHour = Math.floor(activeMission.duskDeadline);
-        const dMin = Math.floor((activeMission.duskDeadline % 1) * 60);
+        const dHour = Math.floor(activeMission.duskDeadline || 19.0);
+        const dMin = Math.floor(((activeMission.duskDeadline || 19.0) % 1) * 60);
         const deadlineStr = `${dHour.toString().padStart(2, '0')}:${dMin.toString().padStart(2, '0')}`;
-        const timeDiff = activeMission.duskDeadline - this.timeOfDay;
+        const timeDiff = (activeMission.duskDeadline || 19.0) - this.timeOfDay;
 
         if (timeDiff > 0) {
           const remHours = Math.floor(timeDiff);
           const remMins = Math.floor((timeDiff % 1) * 60);
-          deadlineBadge.textContent = `⏳ ${activeMission.chapter} DUSK: ${deadlineStr} (${remHours > 0 ? remHours + 'h ' : ''}${remMins}m left)`;
+          deadlineBadge.textContent = `${activeMission.chapter} DUSK: ${deadlineStr} (${remHours > 0 ? remHours + 'h ' : ''}${remMins}m left)`;
           deadlineBadge.className = 'dusk-badge';
         } else {
-          deadlineBadge.textContent = `⚠️ DUSK PASSED: NIGHTFALL - BEASTS ACTIVE!`;
+          deadlineBadge.textContent = 'DUSK PASSED: NIGHTFALL - BEASTS ACTIVE';
           deadlineBadge.className = 'dusk-badge urgent';
         }
       }
