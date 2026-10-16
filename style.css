@@ -1367,4 +1367,17 @@ body, html {
   font-weight: 700;
 }
 
+/* Ember Clock Styling */
+#ember-clock {
+  border-color: rgba(245, 158, 11, 0.4);
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.18);
+  transition: all 0.3s ease;
+}
+
+#ember-clock:hover {
+  border-color: rgba(245, 158, 11, 0.7);
+  box-shadow: 0 0 22px rgba(245, 158, 11, 0.3);
+}
+
+
 

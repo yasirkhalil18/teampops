@@ -3305,6 +3305,7 @@ class FrostboundGame {
     this.trailerStartTime = 0;
     this.trailerDuration = 60.0;
     this.lastBeaconAttempt = 0;
+    this.hasShownLightHint = false;
 
     this.initThree();
     this.buildWorld();
@@ -3434,6 +3435,26 @@ class FrostboundGame {
 
     // 3D Search & Rescue Helicopter for Chapter 6 Ending Cutscene
     this.rescueHelicopter = new RescueHelicopter(this.scene);
+
+    // Ember Clock Light Radius Ring for Torch (14m radius)
+    this.torchLightRing = this.createLightRing(14.0, 0xffaa44, 0.28);
+    this.torchLightRing.visible = false;
+    this.scene.add(this.torchLightRing);
+  }
+
+  createLightRing(radius, color = 0xff8833, opacity = 0.3) {
+    const geom = new THREE.RingGeometry(radius - 0.18, radius + 0.18, 48);
+    geom.rotateX(-Math.PI / 2);
+    const mat = new THREE.MeshBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: opacity,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.renderOrder = 2;
+    return mesh;
   }
 
   initHDRI() {
@@ -6076,10 +6097,12 @@ class FrostboundGame {
   }
 
   spawnShadowWolves() {
-    // 3 shadow wolves stationed across wilderness corridors
+    // 5 shadow creatures stationed across wilderness corridors (max 6)
     const wolfPositions = [
       new THREE.Vector3(-95, 1, 415),   // Zone 1/2 boundary canyon pass
       new THREE.Vector3(130, 1, 190),   // Zone 2/3 dark forest edge
+      new THREE.Vector3(-45, 1, 30),    // Zone 3 glacial lake valley
+      new THREE.Vector3(-90, 1, -210),  // Zone 4 hunter camp ridge
       new THREE.Vector3(30, 1, -380)    // Zone 4/5 high ridge crags
     ];
 
@@ -6091,13 +6114,15 @@ class FrostboundGame {
       const shadowMat = new THREE.MeshStandardMaterial({
         color: 0x0f172a,
         roughness: 0.3,
-        metalness: 0.8
+        metalness: 0.8,
+        transparent: true,
+        opacity: 0
       });
       const body = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.8, 1.8), shadowMat);
       body.castShadow = true;
       wolfGroup.add(body);
 
-      const eyeMat = new THREE.MeshBasicMaterial({ color: 0xa855f7 });
+      const eyeMat = new THREE.MeshBasicMaterial({ color: 0xa855f7, transparent: true, opacity: 0 });
       const leftEye = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), eyeMat);
       leftEye.position.set(-0.25, 0.3, -0.9);
       const rightEye = leftEye.clone();
@@ -6105,6 +6130,7 @@ class FrostboundGame {
       wolfGroup.add(leftEye);
       wolfGroup.add(rightEye);
 
+      wolfGroup.visible = false;
       this.scene.add(wolfGroup);
       this.shadowWolves.push({
         id: `wolf_${idx}`,
@@ -6112,8 +6138,9 @@ class FrostboundGame {
         hp: 3,
         speed: 4.2, // Actual speed ~4 units/sec as requested
         state: 'circle',
+        opacity: 0,
         circleTimer: 3.0 + Math.random() * 2.5,
-        circleAngle: (idx * Math.PI * 2) / 3,
+        circleAngle: (idx * Math.PI * 2) / 5,
         circleRadius: 8.5 + (Math.random() - 0.5) * 2.0,
         attackTimer: 0
       });
@@ -8338,21 +8365,46 @@ class FrostboundGame {
       }
     }
 
-    // Campfires Safe Zones: Real Flame Particles & Flicker Light
+    // Ember Clock: Torch Light Radius Ring (14m radius)
+    if (this.torchLightRing) {
+      if (this.isTorchOn && this.torchFuel > 0) {
+        this.torchLightRing.visible = true;
+        const px = this.player.position.x;
+        const pz = this.player.position.z;
+        const py = getTerrainHeight(px, pz) + 0.08;
+        this.torchLightRing.position.set(px, py, pz);
+      } else {
+        this.torchLightRing.visible = false;
+      }
+    }
+
+    // Campfires Safe Zones: Real Flame Particles & Flicker Light & Ember Clock Ring (12m radius)
     let isNearFire = false;
     this.campfires.forEach((c, idx) => {
       const dist = this.player.position.distanceTo(c.pos);
-      if (dist < 7.5) isNearFire = true;
+      if (dist < 12.0 && (c.timeRemaining === undefined || c.timeRemaining > 0)) isNearFire = true;
+
+      // Ensure campfire subtle light ring
+      if (!c.ringMesh) {
+        c.ringMesh = this.createLightRing(12.0, 0xff6622, 0.32);
+        c.ringMesh.position.set(c.pos.x, getTerrainHeight(c.pos.x, c.pos.z) + 0.08, c.pos.z);
+        this.scene.add(c.ringMesh);
+      }
+      c.ringMesh.visible = (c.timeRemaining === undefined || c.timeRemaining > 0);
 
       // Real flame & ember particles
       if (c.flameParticles) {
-        c.flameParticles.update(delta, c.pos, true);
+        c.flameParticles.update(delta, c.pos, c.timeRemaining === undefined || c.timeRemaining > 0);
       }
 
       // Multi-harmonic light flicker
       if (c.light) {
-        const cf = Math.sin(timeSec * 18 + idx * 4) * 0.45 + Math.sin(timeSec * 31 + idx * 3) * 0.25;
-        c.light.intensity = Math.max(2.2, 4.0 + cf);
+        if (c.timeRemaining === undefined || c.timeRemaining > 0) {
+          const cf = Math.sin(timeSec * 18 + idx * 4) * 0.45 + Math.sin(timeSec * 31 + idx * 3) * 0.25;
+          c.light.intensity = Math.max(2.2, 4.0 + cf);
+        } else {
+          c.light.intensity = 0;
+        }
       }
     });
 
@@ -8868,44 +8920,74 @@ class FrostboundGame {
   }
 
   updateWolves(delta) {
+    const isNight = this.timeOfDay < 6.0 || this.timeOfDay > 18.0;
     const playerPos = this.player.position;
 
-    // Check light zones: Torch light radius (~17.5m) and Campfire radius (~12m)
-    const isPlayerNearCampfire = this.campfires.some(c => playerPos.distanceTo(c.pos) < 12.0);
+    // Check light zones: Torch light radius (~14.0m) and Campfire radius (~12m)
+    const isPlayerNearCampfire = this.campfires.some(c => (c.timeRemaining === undefined || c.timeRemaining > 0) && playerPos.distanceTo(c.pos) < 12.0);
     const playerHasTorch = this.isTorchOn && this.torchFuel > 0;
+    const isPlayerInLight = isPlayerNearCampfire || playerHasTorch;
 
     this.shadowWolves.forEach(wolf => {
       const wolfPos = wolf.mesh.position;
       const distToPlayer = wolfPos.distanceTo(playerPos);
-      const isWolfNearCampfire = this.campfires.some(c => wolfPos.distanceTo(c.pos) < 12.0);
-      const inTorchLight = playerHasTorch && (distToPlayer < 17.5);
-      const isSafeInLight = inTorchLight || isPlayerNearCampfire || isWolfNearCampfire;
+      const isWolfNearCampfire = this.campfires.some(c => (c.timeRemaining === undefined || c.timeRemaining > 0) && wolfPos.distanceTo(c.pos) < 12.0);
+      const inTorchLight = playerHasTorch && (distToPlayer < 14.0);
+      const isSafeInLight = isPlayerInLight || inTorchLight || isWolfNearCampfire;
 
-      // 1. LIGHT RADIUS CHECK:
-      // "shadow creatures only move when player's torch/fire is off or outside light radius"
-      if (isSafeInLight) {
-        // Wolf is repelled by light! Face player nervously
-        wolf.mesh.lookAt(playerPos.x, wolfPos.y, playerPos.z);
+      if (wolf.opacity === undefined) wolf.opacity = 0;
 
-        if (distToPlayer < 16.5) {
-          // Recoil/retreat backwards away from the light to shadow perimeter
-          const retreatDir = new THREE.Vector3().subVectors(wolfPos, playerPos).normalize();
-          wolfPos.x += retreatDir.x * delta * 5.5;
-          wolfPos.z += retreatDir.z * delta * 5.5;
+      // 1. DAYTIME OR INSIDE LIGHT RADIUS: FADE AWAY & HIDE
+      if (!isNight || isSafeInLight) {
+        wolf.opacity = Math.max(0, wolf.opacity - delta * 2.5);
+        if (wolf.opacity <= 0.01) {
+          wolf.mesh.visible = false;
+        } else {
+          wolf.mesh.visible = true;
+          wolf.mesh.scale.setScalar(Math.max(0.05, wolf.opacity));
+          wolf.mesh.traverse(child => {
+            if (child.material) {
+              child.material.transparent = true;
+              child.material.opacity = wolf.opacity;
+            }
+          });
         }
-        // At shadow boundary, wolf is frozen in shadow, stalking harmlessly
-        wolf.mesh.position.y = getTerrainHeight(wolfPos.x, wolfPos.z) + 0.4;
+
+        // If caught in light, recoil/retreat backwards away from the light
+        if (isSafeInLight && distToPlayer < 16.0) {
+          const retreatDir = new THREE.Vector3().subVectors(wolfPos, playerPos).normalize();
+          wolfPos.x += retreatDir.x * delta * 5.0;
+          wolfPos.z += retreatDir.z * delta * 5.0;
+        }
+        wolfPos.y = getTerrainHeight(wolfPos.x, wolfPos.z) + 0.4;
+        wolf.mesh.lookAt(playerPos.x, wolfPos.y, playerPos.z);
         return;
       }
 
-      // 2. IN DARKNESS (Torch is OFF / fuel empty / outside light radius):
-      // Wolves awaken and hunt! Actual speed ~4.0 units/sec, terrain-grounded, circle then attack!
+      // 2. AT NIGHT AND OUTSIDE LIGHT RADIUS: APPEAR & APPROACH
+      wolf.opacity = Math.min(1.0, wolf.opacity + delta * 2.0);
+      wolf.mesh.visible = true;
+      wolf.mesh.scale.setScalar(wolf.opacity);
+      wolf.mesh.traverse(child => {
+        if (child.material) {
+          child.material.transparent = true;
+          child.material.opacity = wolf.opacity;
+        }
+      });
+
+      // Show on-screen hint the first time a shadow appears: ("Stay in the light")
+      if (!this.hasShownLightHint && distToPlayer < 45.0) {
+        this.hasShownLightHint = true;
+        this.showToast('🔥 Stay in the light! Shadow creatures stalk the darkness.');
+        this.showSubtitle('EMBER SURVIVAL', 'Stay in the light! Shadows only appear in darkness and fade near fire.', 6.0);
+      }
+
+      // Stalk closer if outside 55m
       if (distToPlayer > 55.0) {
-        // Outside engagement range, slowly stalk closer
         const approachDir = new THREE.Vector3().subVectors(playerPos, wolfPos).normalize();
         wolfPos.x += approachDir.x * delta * 2.8;
         wolfPos.z += approachDir.z * delta * 2.8;
-        wolf.mesh.position.y = getTerrainHeight(wolfPos.x, wolfPos.z) + 0.4;
+        wolfPos.y = getTerrainHeight(wolfPos.x, wolfPos.z) + 0.4;
         wolf.mesh.lookAt(playerPos.x, wolfPos.y, playerPos.z);
         return;
       }
@@ -8915,7 +8997,6 @@ class FrostboundGame {
         wolf.circleTimer -= delta;
         wolf.circleAngle += delta * (wolf.speed / wolf.circleRadius);
 
-        // Target spot orbiting player in darkness
         const targetX = playerPos.x + Math.cos(wolf.circleAngle) * wolf.circleRadius;
         const targetZ = playerPos.z + Math.sin(wolf.circleAngle) * wolf.circleRadius;
 
@@ -8927,19 +9008,16 @@ class FrostboundGame {
           wolfPos.z += moveDir.z * wolf.speed * delta;
         }
 
-        // Always face player while circling
         wolf.mesh.lookAt(playerPos.x, wolfPos.y, playerPos.z);
 
-        // Switch to attack when circling countdown elapses
         if (wolf.circleTimer <= 0) {
           wolf.state = 'attack';
-          wolf.attackTimer = 3.2; // 3.2s charge window
+          wolf.attackTimer = 3.2;
           this.sfx.playWolfHowl();
         }
       } else if (wolf.state === 'attack') {
         wolf.attackTimer -= delta;
 
-        // Charge directly at player at 5.4 units/sec!
         const chargeDir = new THREE.Vector3().subVectors(playerPos, wolfPos);
         chargeDir.y = 0;
         chargeDir.normalize();
@@ -8948,17 +9026,15 @@ class FrostboundGame {
         wolfPos.z += chargeDir.z * 5.4 * delta;
         wolf.mesh.lookAt(playerPos.x, wolfPos.y, playerPos.z);
 
-        // Strike player if reached
         if (distToPlayer < 2.0) {
           this.health = Math.max(0, this.health - delta * 20);
           this.triggerDamageFlash('rgba(168, 85, 247, 0.65)');
           this.triggerScreenShake(0.35);
 
           if (this.health <= 0) {
-            this.triggerGameOver('Dragged down into the frozen shadows by the wolf pack.');
+            this.triggerGameOver('Dragged down into the frozen shadows by the creature.');
           }
 
-          // Leap back into circling formation after bite
           wolf.state = 'circle';
           wolf.circleTimer = 3.2 + Math.random() * 2.0;
           wolf.circleAngle = Math.atan2(wolfPos.z - playerPos.z, wolfPos.x - playerPos.x);
@@ -8970,7 +9046,6 @@ class FrostboundGame {
         }
       }
 
-      // Terrain-grounded without per-frame raycasts
       wolfPos.y = getTerrainHeight(wolfPos.x, wolfPos.z) + 0.4;
     });
   }

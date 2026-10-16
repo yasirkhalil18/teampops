@@ -131,11 +131,14 @@
   <div id="hud" class="hidden">
     <!-- Top Bar: Time, Compass, Weather -->
     <div class="hud-top">
-      <div class="time-widget glassmorphic-sm">
+      <div class="time-widget glassmorphic-sm" id="ember-clock">
         <div class="clock-icon" id="clock-icon">☀️</div>
         <div class="time-info">
-          <span id="day-counter">DAY 1</span>
-          <span id="time-display">17:30</span>
+          <div class="clock-label" style="font-size: 0.65rem; color: #f59e0b; font-weight: 700; letter-spacing: 1px;">EMBER CLOCK</div>
+          <div style="display: flex; gap: 8px; align-items: baseline;">
+            <span id="day-counter">DAY 1</span>
+            <span id="time-display" style="font-size: 1.15rem; font-weight: 700; color: #f8fafc;">17:30</span>
+          </div>
           <span id="dusk-deadline-badge" class="dusk-badge">⏳ CHAPTER 1 DUSK: 19:00</span>
         </div>
       </div>
