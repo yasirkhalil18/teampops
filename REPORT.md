@@ -106,14 +106,19 @@ The road path from start (z=520) to Radio Tower (z=-560) is completely clear and
 
 ---
 
-## What Failed or Was Skipped
-- **Failures:** None. All tasks succeeded and passed builds on their initial validation passes.
-- **Skipped Items:** None. All specified sub-tasks (1a-g, 2, 3, 4) were implemented completely.
+## Runtime Bug Fixes & In-Browser Playability Verification
+During in-browser live testing via browser subagent, three subtle runtime/shader issues were discovered and resolved:
+1. **Shader Compilation (`waterMat`):**
+   - Replaced undeclared fragment identifier `normalMatrix` with view-aligned surface normal perturbation (`normal + vec3(wN1.x + wN2.x, wN1.y + wN2.y, 0.0) * 0.25`).
+2. **Shader Compilation (`roadMat`):**
+   - Wrapped tire tread vertex coordinate logic in `#if defined( USE_MAP )` and referenced `vMapUv.x` instead of undeclared `vUv.x`.
+3. **Simulation Runtime Error (`DataTexture.copy`):**
+   - Added `isColor` type guards on `this.scene.background` when updating fog and sunset colors in `updateSimulation()`, preventing runtime errors when an HDR environment `DataTexture` is assigned as the scene background.
 
----
+### In-Browser Verification Results
+- **URL Tested:** `http://localhost:5174/`
+- **Loading Screen:** Progresses cleanly to 100% and smoothly fades out.
+- **Console Log State:** 0 shader compilation errors, 0 runtime exceptions.
+- **Visuals & Rendering:** 3D scene renders cleanly with no black screen (alpine terrain, mountain ranges, procedural snow particles, road spline, SUV, atmospheric lighting, and sky).
+- **HUD & Systems:** Live Ember Clock (`DAY 1`), survival gauges, inventory, objective markers, and movement (`WASD`) confirmed 100% active and playable.
 
-## Known Issues / Gameplay Notes
-1. **Vite Chunk Size Notice:**
-   - Bundled output JS is ~836 kB minified. Vite outputs an informational chunk size notice (>500 kB), which is normal for Three.js applications bundled into a single runtime bundle without code splitting.
-2. **Story Progression Blockades:**
-   - As intended by design, the three story gates (`col_suv_blockade`, `col_bridge`, and `col_khai_security`) block road passage until their respective chapter objectives are completed. When unlocked, 0 blocked points exist across all 800 road samples.
