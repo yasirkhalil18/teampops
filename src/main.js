@@ -10490,12 +10490,15 @@ class FrostboundGame {
     const overlay = document.getElementById('cinematic-overlay');
     if (overlay) overlay.classList.remove('hidden');
 
-    // Hide 1st-person arms and held torch/stick so drone and cinematic camera views are 100% clean
+    // Show 3rd-person player body for dynamic character gameplay trailer
+    if (this.thirdPersonPlayer) {
+      this.thirdPersonPlayer.setFirstPerson(false);
+      if (this.thirdPersonPlayer.mesh) {
+        this.thirdPersonPlayer.mesh.visible = true;
+      }
+    }
     if (this.fpArms) {
       this.fpArms.root.visible = false;
-    }
-    if (this.flameMesh) {
-      this.flameMesh.visible = false;
     }
 
     // Setup and trigger User Voiceover 1 (trailer_intro.wav: 26.56s)
@@ -10792,183 +10795,192 @@ class FrostboundGame {
     const camPos = new THREE.Vector3();
     const lookTarget = new THREE.Vector3();
 
+    // Ensure 3rd person player model is active & visible
+    if (this.thirdPersonPlayer) {
+      this.thirdPersonPlayer.setFirstPerson(false);
+      if (this.thirdPersonPlayer.mesh) this.thirdPersonPlayer.mesh.visible = true;
+    }
+
     // -------------------------------------------------------------------------
-    // 180-SECOND CINEMATIC TOUR (6 x 30-second Scenic Story Themes)
+    // DYNAMIC PLAYER-CENTRIC GAMEPLAY TRAILER (6 Action-Packed Chapters)
     // -------------------------------------------------------------------------
 
     if (elapsed < 30.0) {
       // -------------------------------------------------------------
-      // ACT I: DAWN BREAKING OVER SOLSTICE VILLAGE (0s - 30s)
-      // Dynamic Sunrise: 05:45 golden dawn -> 07:15 bright morning
-      // First 26.56s voiceover plays during dynamic mountain sunrise & long shadows
+      // ACT I: SURVIVOR EXPEDITION BEGINS (0s - 30s)
+      // Over-the-shoulder action camera following player running through snow
       // -------------------------------------------------------------
       const t = elapsed;
       const dawnProgress = Math.min(1.0, t / 26.56);
-      this.timeOfDay = 5.65 + dawnProgress * 1.5; // 05:39 to 07:09 (Golden sunrise to bright morning)
+      this.timeOfDay = 5.65 + dawnProgress * 1.5;
 
       this.updateCinematicOverlay(
-        'CHAPTER I: SOLSTICE MOUNTAIN VILLAGE',
-        'SANCTUARY OF THE SACRED FLAME • GOLDEN DAWN',
-        'Morning sunlight breaks across snowy summits, stretching long mountain shadows over Solstice.'
+        'CHAPTER I: THE FROZEN ODYSSEY',
+        'SURVIVAL EXPEDITION • SOLSTICE PASS',
+        'Braving sub-zero mountain winds with flaming torch in hand, forging north across deep snow.'
       );
 
-      if (t < 14.0) {
-        // High majestic drone glide along the mountain ridge overlooking the village
-        // Smooth sine easing for cinematic slow pans
-        const u = Math.sin((t / 14.0) * Math.PI * 0.5);
-        const angle = -0.65 + u * 0.85; // Gentle 48-degree arc, no dizzy spinning
-        const orbitRadius = 48.0;
-        const camX = 160.0 + Math.cos(angle) * orbitRadius;
-        const camZ = 246.0 + Math.sin(angle) * orbitRadius;
-        camPos.set(camX, Math.max(getTerrainHeight(camX, camZ) + 14.0, 34.0 - u * 3.0), camZ);
-        lookTarget.set(162.0, getTerrainHeight(162.0, 246.0) + 2.8, 246.0);
-      } else if (t < 23.0) {
-        // Over-the-shoulder action tracking shot along village stone promenade
-        // Character grounded on stone pathway walking smoothly, dynamic morning shadows stretching ahead
-        const u = (t - 14.0) / 9.0;
-        const playerWalkX = 148.0 + u * 16.0;
-        const playerWalkZ = 256.0 - u * 14.0;
-        const groundY = getTerrainHeight(playerWalkX, playerWalkZ);
-        this.player.position.set(playerWalkX, groundY + 0.08, playerWalkZ);
-        if (this.thirdPersonPlayer) {
-          this.thirdPersonPlayer.setFirstPerson(false);
-          this.thirdPersonPlayer.update(delta, this.player.position, 3.2, true, false, new THREE.Vector3(16.0, 0, -14.0).normalize(), true, 0);
-        }
-        camPos.set(playerWalkX - 3.4, groundY + 2.5, playerWalkZ + 4.5);
-        lookTarget.set(playerWalkX + 2.2, groundY + 1.6, playerWalkZ - 2.8);
-      } else {
-        // Broad sweeping view down the village stone stairs toward the mountain valley
-        const u = (t - 23.0) / 7.0;
-        const stairX = 144.0 - u * 10.0;
-        const stairZ = 265.0 + u * 12.0;
-        camPos.set(stairX, getTerrainHeight(stairX, stairZ) + 10.0 + u * 2.0, stairZ);
-        lookTarget.set(162.0, getTerrainHeight(162.0, 246.0) + 2.5, 246.0);
+      // Player running along the mountain road
+      const u = t / 30.0;
+      const px = 145.0 + u * 28.0;
+      const pz = 260.0 - u * 32.0;
+      const py = getTerrainHeight(px, pz);
+      this.player.position.set(px, py + 0.05, pz);
+
+      const moveDir = new THREE.Vector3(28.0, 0, -32.0).normalize();
+      if (this.thirdPersonPlayer) {
+        this.thirdPersonPlayer.update(delta, this.player.position, 6.5, true, true, moveDir, true, Math.atan2(moveDir.x, moveDir.z));
       }
+
+      // Close over-the-shoulder chase camera showing player in action
+      const camDist = 3.6 + Math.sin(t * 0.4) * 0.6;
+      camPos.set(px - moveDir.x * camDist + 0.8, py + 2.1, pz - moveDir.z * camDist);
+      lookTarget.set(px + moveDir.x * 2.5, py + 1.6, pz + moveDir.z * 2.5);
+
     } else if (elapsed < 60.0) {
       // -------------------------------------------------------------
-      // ACT II: THE GORGE DRAWBRIDGE & RIVER RAPIDS (30s - 60s)
-      // Crisp clear daytime (10:30 AM) with sparkling alpine river
+      // ACT II: TIMBER DRAWBRIDGE RUN & RIVER GORGE (30s - 60s)
+      // Dynamic tracking alongside player crossing the deep canyon bridge
       // -------------------------------------------------------------
       const t = elapsed - 30.0;
-      this.timeOfDay = 10.5; // Bright sunny morning
+      this.timeOfDay = 10.5;
+
       this.updateCinematicOverlay(
         'CHAPTER II: THE GORGE CROSSING',
-        'TIMBER DRAWBRIDGE & ROARING RAPIDS',
-        'Sunlight shines down the glacial gorge as the timber drawbridge spans the canyon chasm.'
+        'EXPEDITION SPRINT • TIMBER DRAWBRIDGE',
+        'Crossing the treacherous canyon chasm as glacial river waters roar hundreds of feet below.'
       );
 
-      if (t < 15.0) {
-        // River valley tracking shot looking up along gorge water towards the bridge span
-        const u = Math.sin((t / 15.0) * Math.PI * 0.5);
-        const cx = -162 - u * 12;
-        const cz = 492 + u * 18;
-        camPos.set(cx, Math.max(getTerrainHeight(cx, cz) + 5.0, 2.5 + u * 3.0), cz);
-        lookTarget.set(-176, 5.5, 514);
-      } else {
-        // High sweeping crane shot above bridge and canyon pass
-        const u = (t - 15.0) / 15.0;
-        const p1 = new THREE.Vector3(-192, 22, 536);
-        const p2 = new THREE.Vector3(-145, 24, 475);
-        camPos.lerpVectors(p1, p2, u);
-        lookTarget.set(-170, 7.5, 505);
+      // Player running across the drawbridge
+      const u = t / 30.0;
+      const px = -188.0 + u * 38.0;
+      const pz = 528.0 - u * 30.0;
+      const py = getTerrainHeight(px, pz) + 0.3;
+      this.player.position.set(px, py, pz);
+
+      const moveDir = new THREE.Vector3(38.0, 0, -30.0).normalize();
+      if (this.thirdPersonPlayer) {
+        this.thirdPersonPlayer.update(delta, this.player.position, 7.2, true, true, moveDir, true, Math.atan2(moveDir.x, moveDir.z));
       }
+
+      if (t < 15.0) {
+        // Low dynamic side-tracking shot watching player's boots and torch run across bridge planks
+        camPos.set(px - 3.2, py + 1.2, pz + 3.0);
+        lookTarget.set(px + 0.5, py + 1.4, pz - 0.5);
+      } else {
+        // Front-facing cinematic camera: player sprints straight towards the camera!
+        camPos.set(px + moveDir.x * 4.5, py + 1.8, pz + moveDir.z * 4.5);
+        lookTarget.set(px, py + 1.5, pz);
+      }
+
     } else if (elapsed < 90.0) {
       // -------------------------------------------------------------
-      // ACT III: CANYON RIDGE & GOLDEN SUNSET (60s - 90s)
-      // Majestic Golden Sunset Alpenglow (17:30 - 18:45)
-      // Short 8s first-person campfire crafting clip followed by sweeping golden ridge
+      // ACT III: NIGHTFALL & SHADOW BEAST COMBAT (60s - 90s)
+      // Close intense action camera: player fighting off Shadow Wolves with flaming brand!
       // -------------------------------------------------------------
       const t = elapsed - 60.0;
-      this.timeOfDay = 17.6 + (t / 30.0) * 1.0; // 17:36 to 18:36 (Rich golden hour sunset)
+      this.timeOfDay = 20.5; // Dramatic nighttime with glowing moonlight & fire
+
       this.updateCinematicOverlay(
-        'CHAPTER III: CANYON RIDGE EXPEDITION',
-        'GOLDEN ALPENGLOW & SURVIVAL EMBERS',
-        'Amber sunset bathes the granite crags as travellers kindle warming campfires before dusk.'
+        'CHAPTER III: NIGHTFALL DEFENSE',
+        'BEASTS IN THE DARK • TORCHLIGHT COMBAT',
+        'Defending the perimeter against hungry shadow wolves using fiery strikes and flaming brands.'
       );
 
-      if (t < 10.0) {
-        // Short first-person survival task clip: Player by campfire in golden sunset light
-        const pCampX = -120.0;
-        const pCampZ = 450.0;
-        const groundY = getTerrainHeight(pCampX, pCampZ);
-        this.player.position.set(pCampX, groundY, pCampZ);
-        camPos.set(pCampX, groundY + 1.62, pCampZ);
-        const u = t / 10.0;
-        // Looking smoothly towards campfire and sunset horizon
-        lookTarget.set(pCampX + Math.cos(-0.4 + u * 0.3) * 6, groundY + 0.9, pCampZ + Math.sin(-0.4 + u * 0.3) * 6);
-      } else {
-        // Sweeping panoramic crane shot above Canyon Ridge pines bathed in amber sunset
-        const u = (t - 10.0) / 20.0;
-        const p1 = new THREE.Vector3(-138, 22, 460);
-        const p2 = new THREE.Vector3(-96, 26, 410);
-        camPos.lerpVectors(p1, p2, u);
-        lookTarget.set(-115, 9.5, 440);
+      const pCampX = -120.0;
+      const pCampZ = 450.0;
+      const groundY = getTerrainHeight(pCampX, pCampZ);
+      this.player.position.set(pCampX, groundY, pCampZ);
+
+      // Trigger swing attacks intermittently
+      const isAttacking = (Math.sin(t * 3.5) > 0.4);
+      const faceDir = new THREE.Vector3(Math.cos(t * 0.8), 0, Math.sin(t * 0.8)).normalize();
+
+      if (this.thirdPersonPlayer) {
+        this.thirdPersonPlayer.update(delta, this.player.position, isAttacking ? 3.0 : 0, true, false, faceDir, true, Math.atan2(faceDir.x, faceDir.z));
       }
+
+      // Show wolf circling close to the fight
+      if (this.shadowWolves && this.shadowWolves.length > 0) {
+        const wolf = this.shadowWolves[0];
+        wolf.mesh.visible = true;
+        const wAngle = t * 1.5;
+        wolf.mesh.position.set(pCampX + Math.cos(wAngle) * 4.2, groundY, pCampZ + Math.sin(wAngle) * 4.2);
+        wolf.mesh.lookAt(pCampX, groundY, pCampZ);
+      }
+
+      // Dynamic orbiting combat camera
+      const camAngle = t * 0.7;
+      camPos.set(pCampX + Math.cos(camAngle) * 4.2, groundY + 1.9, pCampZ + Math.sin(camAngle) * 4.2);
+      lookTarget.set(pCampX, groundY + 1.4, pCampZ);
+
     } else if (elapsed < 120.0) {
       // -------------------------------------------------------------
-      // ACT IV: GLACIAL LAKE & LIVING WILDLIFE (90s - 120s)
-      // Bright crystalline afternoon (13:30)
+      // ACT IV: SURVIVAL CRAFTING & FROZEN LAKE EXPLORATION (90s - 120s)
+      // Player harvesting and exploring crystalline glacial valley
       // -------------------------------------------------------------
       const t = elapsed - 90.0;
-      this.timeOfDay = 13.5; // Pristine clear daytime
+      this.timeOfDay = 14.0; // Clear daytime
+
       this.updateCinematicOverlay(
-        'CHAPTER IV: GLACIAL VALLEY & ALPINE MEADOW',
-        'LIVING ECOSYSTEM • SHIMMERING BASIN',
-        'Turquoise glacial ice sheet, herds of wild deer, and the mountain river cascade.'
+        'CHAPTER IV: WILDERNESS EXPLORATION',
+        'GLACIAL BASIN • RESOURCE EXPEDITION',
+        'Trekking through the icy glacial valley amidst wildlife herds, scavenging timber and winter rations.'
       );
 
-      if (t < 15.0) {
-        // Smooth aerial swoop over shimmering frozen lake
-        const u = Math.sin((t / 15.0) * Math.PI * 0.5);
-        const cx = -35 + Math.cos(u * 0.9) * 26;
-        const cz = 40 + Math.sin(u * 0.9) * 26;
-        camPos.set(cx, Math.max(getTerrainHeight(cx, cz) + 7.0, 15 + u * 2.5), cz);
-        lookTarget.set(-35, 5.2, 40);
-      } else {
-        // High meadow tracking shot following wild deer herd grazing
-        const u = (t - 15.0) / 15.0;
-        const p1 = new THREE.Vector3(75, 26, 180);
-        const p2 = new THREE.Vector3(120, 28, 225);
-        camPos.lerpVectors(p1, p2, u);
-        lookTarget.set(95, 17, 210);
+      const u = t / 30.0;
+      const px = -45.0 + Math.cos(u * 1.5) * 18.0;
+      const pz = 35.0 + Math.sin(u * 1.5) * 18.0;
+      const py = getTerrainHeight(px, pz);
+      this.player.position.set(px, py, pz);
+
+      const moveDir = new THREE.Vector3(-Math.sin(u * 1.5), 0, Math.cos(u * 1.5)).normalize();
+      if (this.thirdPersonPlayer) {
+        this.thirdPersonPlayer.update(delta, this.player.position, 5.0, true, false, moveDir, true, Math.atan2(moveDir.x, moveDir.z));
       }
+
+      // Smooth shoulder-level follow camera with wide mountain backdrop
+      camPos.set(px - moveDir.x * 4.0 + 1.2, py + 2.0, pz - moveDir.z * 4.0);
+      lookTarget.set(px + moveDir.x * 2.0, py + 1.4, pz + moveDir.z * 2.0);
+
     } else if (elapsed < 150.0) {
       // -------------------------------------------------------------
-      // ACT V: HUNTER CAMP & KHAI ROPE SUSPENSION BRIDGE (120s - 150s)
-      // Late golden afternoon (16:30)
+      // ACT V: SWAYING ROPE SUSPENSION BRIDGE TRAVERSAL (120s - 150s)
+      // Tense forward camera of player crossing the Khai Chasm rope bridge
       // -------------------------------------------------------------
       const t = elapsed - 120.0;
-      this.timeOfDay = 16.5; // Warm afternoon light
+      this.timeOfDay = 16.8; // Rich sunset light
+
       this.updateCinematicOverlay(
-        'CHAPTER V: KHAI CHASM & ROPE BRIDGE',
-        'TRAVERSING THE ABYSS',
-        'Hunter Camp outpost, spinning windmill, and the swaying rope suspension bridge.'
+        'CHAPTER V: KHAI ROPE SUSPENSION BRIDGE',
+        'TRAVERSING THE ABYSS • HIGH ALTITUDE CROSSING',
+        'Cautiously crossing the swaying timber and cable bridge suspended over thousand-foot abyss.'
       );
 
-      if (t < 15.0) {
-        // Gentle flyby over Hunter Camp workshop and windmill
-        const u = Math.sin((t / 15.0) * Math.PI * 0.5);
-        const angle = -0.4 + u * 0.9;
-        const cx = -70 + Math.cos(angle) * 22;
-        const cz = -235 + Math.sin(angle) * 22;
-        camPos.set(cx, Math.max(getTerrainHeight(cx, cz) + 12.0, 32 + Math.sin(u * Math.PI) * 1.5), cz);
-        lookTarget.set(-70, 22, -235);
-      } else {
-        // Majestic tracking shot alongside swaying rope suspension bridge over deep abyss
-        const u = (t - 15.0) / 15.0;
-        const p1 = new THREE.Vector3(-45, 46, -400);
-        const p2 = new THREE.Vector3(15, 54, -460);
-        camPos.lerpVectors(p1, p2, u);
-        lookTarget.set(-20, 34, -430);
+      // Player crossing the high rope bridge
+      const u = t / 30.0;
+      const px = -35.0 + u * 48.0;
+      const pz = -410.0 - u * 35.0;
+      const bridgeSway = Math.sin(t * 2.5) * 0.15;
+      const py = getTerrainHeight(px, pz) + 12.0 + bridgeSway;
+      this.player.position.set(px, py, pz);
+
+      const moveDir = new THREE.Vector3(48.0, 0, -35.0).normalize();
+      if (this.thirdPersonPlayer) {
+        this.thirdPersonPlayer.update(delta, this.player.position, 4.2, true, false, moveDir, true, Math.atan2(moveDir.x, moveDir.z));
       }
+
+      // Close dramatic 3rd person angle highlighting the swaying bridge and the survivor
+      camPos.set(px - moveDir.x * 3.8 - 1.2, py + 1.8, pz - moveDir.z * 3.8);
+      lookTarget.set(px + moveDir.x * 3.0, py + 1.5, pz + moveDir.z * 3.0);
+
     } else {
       // -------------------------------------------------------------
-      // ACT VI: THE SUMMIT RADIO TOWER & RESCUE HELICOPTER (150s - 180s)
-      // Dramatic sunset alpenglow summit (18:45) - rich colors, NOT pitch dark night
-      // Trigger trailer_end.wav (14.12s) at 165s
+      // ACT VI: SUMMIT TOWER & EXTRACTION VICTORY (150s - 180s)
+      // Player reaching summit, igniting beacon as rescue helicopter arrives
       // -------------------------------------------------------------
       const t = elapsed - 150.0;
-      this.timeOfDay = 18.6; // Dramatic crimson & amber sunset summit (bright silhouettes & glowing rescue searchlights)
+      this.timeOfDay = 18.7; // Sunset beacon summit
 
       if (elapsed >= 165.0 && !this.trailerEndPlayed) {
         try {
@@ -10988,33 +11000,39 @@ class FrostboundGame {
       }
 
       this.updateCinematicOverlay(
-        'CHAPTER VI: SUMMIT OF HOPE',
-        'RADIO TOWER SOS & HELICOPTER EXTRACTION',
-        'Igniting the summit rescue beacon as search-and-rescue helicopters arrive over the peaks.'
+        'CHAPTER VI: SUMMIT EXTRACTION',
+        'SIGNAL OF HOPE • RESCUE ARRIVAL',
+        'Igniting the summit beacon at the Radio Tower as search-and-rescue helicopters arrive overhead.'
       );
 
+      // Player stands victoriously by the tower beacon
+      const towerX = 0;
+      const towerZ = -555;
+      const groundY = getTerrainHeight(towerX, towerZ);
+      this.player.position.set(towerX, groundY, towerZ);
+
+      const lookUpDir = new THREE.Vector3(0, 0, 1);
+      if (this.thirdPersonPlayer) {
+        this.thirdPersonPlayer.update(delta, this.player.position, 0, true, false, lookUpDir, true, 0);
+      }
+
       if (t < 15.0) {
-        // Slow majestic ascending crane shot framing the Radio Tower beacon and helicopter
-        const u = Math.sin((t / 15.0) * Math.PI * 0.5);
-        const angle = -0.3 + u * 1.2; // Gentle slow arc
-        const cx = Math.cos(angle) * 30;
-        const cz = -560 + Math.sin(angle) * 30;
-        camPos.set(cx, Math.max(getTerrainHeight(cx, cz) + 8.0, 56 + u * 35), cz);
-        lookTarget.set(0, 75, -560);
+        // Dramatic low angle hero shot looking up past player towards glowing tower & helicopter
+        const u = t / 15.0;
+        camPos.set(towerX - 2.5, groundY + 0.9, towerZ + 3.8 - u * 1.5);
+        lookTarget.set(towerX, groundY + 12.0 + u * 25.0, towerZ);
       } else {
-        // Epic wide vista shot framing the entire mountain descent, rescue helicopter, and sky
+        // Wide epic pull-back revealing player holding torch under the helicopter searchlights
         const u = (t - 15.0) / 15.0;
-        const p1 = new THREE.Vector3(-42, 102, -532);
-        const p2 = new THREE.Vector3(45, 112, -500);
-        camPos.lerpVectors(p1, p2, u);
-        lookTarget.set(0, 75, -560);
+        camPos.set(towerX - 6.0 - u * 12.0, groundY + 3.5 + u * 8.0, towerZ + 8.0 + u * 15.0);
+        lookTarget.set(towerX, groundY + 2.0, towerZ);
       }
     }
 
-    // Safety: enforce minimum height clearance above terrain to prevent clipping
+    // Safety clearance
     const groundElevation = getTerrainHeight(camPos.x, camPos.z);
-    if (camPos.y < groundElevation + 2.2) {
-      camPos.y = groundElevation + 2.2;
+    if (camPos.y < groundElevation + 1.2) {
+      camPos.y = groundElevation + 1.2;
     }
 
     this.camera.position.copy(camPos);
