@@ -7,7 +7,6 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 const heightmapUrl = new URL('./assets/heightmap.png', import.meta.url).href;
-const groundTexUrl = new URL('./assets/ground_color.jpg', import.meta.url).href;
 const rockTexUrl = new URL('./assets/rock_color.jpg', import.meta.url).href;
 
 // ---------------------------------------------------------------------------
@@ -671,20 +670,6 @@ function perlin2D(x, y) {
   );
 }
 
-function fbm2D(x, y, octaves = 5) {
-  let total = 0;
-  let freq = 1;
-  let amp = 1;
-  let maxAmp = 0;
-  for (let i = 0; i < octaves; i++) {
-    total += perlin2D(x * freq, y * freq) * amp;
-    maxAmp += amp;
-    amp *= 0.5;
-    freq *= 2.0;
-  }
-  return total / maxAmp;
-}
-
 // ---------------------------------------------------------------------------
 // 512x512 GRAYSCALE HEIGHTMAP & BILINEAR SAMPLER (WITH MULTI-OCTAVE NOISE FALLBACK)
 // ---------------------------------------------------------------------------
@@ -892,6 +877,27 @@ for (let i = 0; i < ROAD_SAMPLES_COUNT - 1; i++) {
 }
 
 function getRoadSignedDistance(x, z) {
+  // Straight road lead-in segment for car approach (z: 570 down to 520 along x = -180)
+  if (z >= 520) {
+    const projX = -180.0;
+    const projZ = z;
+    const projY = 0.0;
+    const roadDist = Math.abs(x - projX);
+    // Heading in direction (0, -1), left normal is (-1, 0)
+    const signedDist = -(x - projX);
+    return {
+      signedDist,
+      roadDist,
+      projX,
+      projY,
+      projZ,
+      tx: 0,
+      tz: -1,
+      lx: -1,
+      lz: 0
+    };
+  }
+
   // Step 1: Coarse check every 10 samples
   let bestDistSq = Infinity;
   let bestIdx = 0;
@@ -948,6 +954,63 @@ function getRoadSignedDistance(x, z) {
 }
 
 // ---------------------------------------------------------------------------
+// VILLAGE & CABIN FOOTPATHS (Connecting every house door, well, bonfire & gorge bridge)
+// ---------------------------------------------------------------------------
+const VILLAGE_PATH_SEGMENTS = [
+  // Hub connects to the main road at (160, 288)
+  { ax: 162.0, az: 248.0, bx: 160.0, bz: 288.0 },
+  // Hub connects to Elder Soren's Town Hall porch (152, 250)
+  { ax: 162.0, az: 248.0, bx: 152.0, bz: 250.0 },
+  // Hub connects to Sacred Bonfire Hearth (155, 242)
+  { ax: 162.0, az: 248.0, bx: 155.0, bz: 242.0 },
+  // Hub connects to Blacksmith Workshop (172, 235)
+  { ax: 162.0, az: 248.0, bx: 172.0, bz: 235.0 },
+  // Hub connects to Village Storehouse (145, 235)
+  { ax: 162.0, az: 248.0, bx: 145.0, bz: 235.0 },
+  // Hub connects to Tool Shed (176, 258)
+  { ax: 162.0, az: 248.0, bx: 176.0, bz: 258.0 },
+  // Hub connects to secondary fire pit (168, 255)
+  { ax: 162.0, az: 248.0, bx: 168.0, bz: 255.0 },
+  // Hub connects to Gorge Drawbridge Winch approach (161.5, 247 -> 160, 290)
+  { ax: 162.0, az: 248.0, bx: 161.5, bz: 247.0 },
+  // Branch paths connecting all other cabins into the network:
+  { ax: 152.0, az: 250.0, bx: 132.0, bz: 258.0 }, // House 5
+  { ax: 132.0, az: 258.0, bx: 138.0, bz: 275.0 }, // House 6
+  { ax: 152.0, az: 250.0, bx: 154.0, bz: 270.0 }, // House 7
+  { ax: 160.0, az: 288.0, bx: 168.0, bz: 298.0 }, // House 8
+  { ax: 176.0, az: 258.0, bx: 188.0, bz: 248.0 }, // House 9
+  { ax: 172.0, az: 235.0, bx: 185.0, bz: 228.0 }, // House 10
+  { ax: 162.0, az: 248.0, bx: 162.0, bz: 220.0 }, // House 11
+  { ax: 145.0, az: 235.0, bx: 135.0, bz: 222.0 }, // House 12
+  { ax: 145.0, az: 235.0, bx: 122.0, bz: 242.0 }, // House 13
+  { ax: 154.0, az: 270.0, bx: 146.0, bz: 290.0 }, // House 14
+  { ax: 188.0, az: 248.0, bx: 216.0, bz: 242.0 }, // House 15
+  { ax: 132.0, az: 258.0, bx: 126.0, bz: 268.0 }  // House 16
+];
+
+// Precompute segment vectors for fast analytical query
+for (const seg of VILLAGE_PATH_SEGMENTS) {
+  seg.dx = seg.bx - seg.ax;
+  seg.dz = seg.bz - seg.az;
+  seg.lenSq = seg.dx * seg.dx + seg.dz * seg.dz || 0.0001;
+}
+
+function getVillagePathDistance(x, z) {
+  // Broad bounding box check for village area (x: 100 to 230, z: 200 to 310)
+  if (x < 100 || x > 230 || z < 200 || z > 310) return 999.0;
+  let minDistSq = Infinity;
+  for (let i = 0; i < VILLAGE_PATH_SEGMENTS.length; i++) {
+    const s = VILLAGE_PATH_SEGMENTS[i];
+    const u = Math.max(0, Math.min(1, ((x - s.ax) * s.dx + (z - s.az) * s.dz) / s.lenSq));
+    const px = s.ax + u * s.dx;
+    const pz = s.az + u * s.dz;
+    const dSq = (x - px) * (x - px) + (z - pz) * (z - pz);
+    if (dSq < minDistSq) minDistSq = dSq;
+  }
+  return Math.sqrt(minDistSq);
+}
+
+// ---------------------------------------------------------------------------
 // HEIGHT + SLOPE TERRAIN SPLATTING (Grass, Dark Soil, Rock, Light High-Altitude Snow)
 // ---------------------------------------------------------------------------
 function getTerrainSlope(x, z) {
@@ -968,8 +1031,8 @@ function getZoneGroundColor(x, z, y) {
   const slope = getTerrainSlope(x, z);
 
   // 2. Base Layer: Lush Alpine Grass, Forest Moss & Meadow Turf
-  let r = 0.28;
-  let g = 0.39;
+  let r = 0.26;
+  let g = 0.42;
   let b = 0.20;
 
   // Road signed distance query for trail/road soil splatting
@@ -979,64 +1042,97 @@ function getZoneGroundColor(x, z, y) {
   // Zone-specific Base Turf / Soil variations
   if (z > 350) {
     // Zone 1: Crash site / lower valley damp rocky soil and alpine moss
-    r = 0.30; g = 0.33; b = 0.24;
-  } else if (z > 140) {
-    // Zone 2: Dense pine forest & whispering golden meadow
-    if (x > 30 && x < 130 && z > 190 && z < 290) {
-      // Golden meadow clearing
-      r = 0.42; g = 0.50; b = 0.22;
+    r = 0.28; g = 0.34; b = 0.22;
+  } else if (z > 130) {
+    // Zone 2: Dense pine forest & wide whispering meadow
+    if (x > 20 && x < 150 && z > 170 && z < 310) {
+      // Wide open green meadow clearing with rich clover and wildflowers
+      r = 0.32; g = 0.52; b = 0.22;
     } else {
-      // Deep pine forest moss
-      r = 0.24; g = 0.38; b = 0.18;
+      // Deep pine forest moss & needles
+      r = 0.22; g = 0.38; b = 0.17;
     }
   } else if (z > -100) {
-    // Zone 3: River valley & lake shore silt / cold alpine turf
-    const lakeDist = Math.hypot(x - (-35), z - 40);
-    if (lakeDist < 65) {
-      // Lake bed cold slate silt
-      r = 0.20; g = 0.28; b = 0.30;
+    // Zone 3: Glacial lake basin (~80m oval) & river gorge
+    const dxLake = (x - (-35)) / 1.15;
+    const dzLake = (z - 40) / 0.95;
+    const lakeDist = Math.hypot(dxLake, dzLake);
+    if (lakeDist < 82) {
+      // Lake bed cold slate silt and icy gravel
+      r = 0.18; g = 0.27; b = 0.32;
     } else {
-      r = 0.27; g = 0.35; b = 0.24;
+      r = 0.25; g = 0.38; b = 0.22;
     }
   } else if (z > -320) {
     // Zone 4: Hunter camp workshop ground - dark soil, pine needles, sawdust
     const campDist = Math.hypot(x - (-70), z - (-235));
-    if (campDist < 45) {
-      r = 0.36; g = 0.28; b = 0.19; // Mud & sawdust
+    if (campDist < 48) {
+      r = 0.34; g = 0.26; b = 0.18; // Mud & weathered sawdust
     } else {
-      r = 0.26; g = 0.33; b = 0.20;
+      r = 0.25; g = 0.34; b = 0.20;
     }
   } else {
     // Zone 5: Khai ridge alpine tundra turf
-    r = 0.28; g = 0.32; b = 0.25;
+    r = 0.26; g = 0.32; b = 0.24;
   }
 
-  // 3. Road Surface & Trail Soil Splat
-  if (absSignedDist < 2.3) {
-    // Road center: dark packed gravel & soil
-    const soilR = 0.24, soilG = 0.18, soilB = 0.13;
-    r = soilR; g = soilG; b = soilB;
-  } else if (absSignedDist < 3.8) {
-    // Road shoulder blend into turf
-    const t = (absSignedDist - 2.3) / 1.5;
-    const soilR = 0.24, soilG = 0.18, soilB = 0.13;
-    r = soilR * (1 - t) + r * t;
-    g = soilG * (1 - t) + g * t;
-    b = soilB * (1 - t) + b * t;
+  // 3. Road Surface (5m width = 2.5m half-width) & 0.3m Gravel Shoulders (2.8m)
+  if (absSignedDist <= 2.5) {
+    // Main road surface: worn dirt with subtle ruts and tire tracks
+    const dirtNoise = perlin2D(x * 0.2, z * 0.2) * 0.04;
+    r = 0.26 + dirtNoise;
+    g = 0.20 + dirtNoise;
+    b = 0.14 + dirtNoise;
+  } else if (absSignedDist <= 2.8) {
+    // 0.3m Gravel Shoulders: slightly lighter gravel tone
+    const shoulderGravel = 0.36 + perlin2D(x * 0.3, z * 0.3) * 0.05;
+    r = shoulderGravel;
+    g = shoulderGravel * 0.95;
+    b = shoulderGravel * 0.90;
+  } else if (absSignedDist <= 4.2) {
+    // Smooth transition from shoulder gravel into grass/terrain
+    const t = (absSignedDist - 2.8) / 1.4;
+    const shoulderR = 0.34, shoulderG = 0.32, shoulderB = 0.28;
+    r = shoulderR * (1 - t) + r * t;
+    g = shoulderG * (1 - t) + g * t;
+    b = shoulderB * (1 - t) + b * t;
   }
 
-  // 4. Slope Splat: Rock / Dark Slate / Mountain Granite
-  // Moderate slopes (> 0.32) start showing rock; steep slopes and cliffs (> 0.74) are solid rock
-  if (slope > 0.32) {
-    const rockT = Math.min(1.0, (slope - 0.32) / 0.42);
-    // Dark slate rock / granite crags
-    let rockR = 0.29, rockG = 0.31, rockB = 0.33;
-    // Extra dark granite for sheer cliffs or canyon drops (pahar / khai)
-    if (slope > 0.85) {
-      rockR = 0.21; rockG = 0.22; rockB = 0.24;
+  // 3b. WORN DIRT FOOTPATHS & TRAIL SPLATTING (Front of Cabins, Village Square, Well & Drawbridge)
+  const pathDist = getVillagePathDistance(x, z);
+  if (pathDist < 2.8) {
+    // Trampled mountain dirt trail with subtle pebbles & faded ground grass
+    const trailNoise = perlin2D(x * 0.25, z * 0.25) * 0.03;
+    const coreDirtR = 0.28 + trailNoise;
+    const coreDirtG = 0.22 + trailNoise;
+    const coreDirtB = 0.15 + trailNoise;
+    if (pathDist <= 1.3) {
+      // Core beaten dirt footpath: heavily trampled earth where people walk
+      r = coreDirtR;
+      g = coreDirtG;
+      b = coreDirtB;
+    } else {
+      // Soft transition edge: trampled earthy grass along trail borders
+      const t = (pathDist - 1.3) / 1.5;
+      const edgeDirtR = coreDirtR * 0.65 + r * 0.35;
+      const edgeDirtG = coreDirtG * 0.65 + g * 0.35;
+      const edgeDirtB = coreDirtB * 0.65 + b * 0.35;
+      r = edgeDirtR * (1 - t) + r * t;
+      g = edgeDirtG * (1 - t) + g * t;
+      b = edgeDirtB * (1 - t) + b * t;
     }
-    // Micro variation in rock shade via 2D noise
-    const rockVar = perlin2D(x * 0.05, z * 0.05) * 0.04;
+  }
+
+  // 4. Slope Splat: Rock / Slate / Granite Cliffs (steep slopes are rock, NOT flat white)
+  if (slope > 0.28) {
+    const rockT = Math.min(1.0, (slope - 0.28) / 0.45);
+    // Mountain granite crags
+    let rockR = 0.28, rockG = 0.30, rockB = 0.32;
+    if (slope > 0.80) {
+      // Dark sheer precipice granite
+      rockR = 0.19; rockG = 0.20; rockB = 0.22;
+    }
+    const rockVar = perlin2D(x * 0.06, z * 0.06) * 0.05;
     rockR = Math.max(0.12, rockR + rockVar);
     rockG = Math.max(0.12, rockG + rockVar);
     rockB = Math.max(0.14, rockB + rockVar);
@@ -1046,16 +1142,14 @@ function getZoneGroundColor(x, z, y) {
     b = b * (1 - rockT) + rockB * rockT;
   }
 
-  // 5. LIGHT Snow Patches ONLY Above Altitude (y > 27m)
-  // Wind-sculpted light snow patches on high mountain crests, leaving rock crags exposed
-  if (y > 27.0) {
-    const altFactor = Math.min(1.0, (y - 27.0) / 12.0); // 0 at 27m, 1 at 39m
+  // 5. SNOW: Only on High Peaks & Ridges (y > 26m) on gentler top surfaces
+  if (y > 26.0) {
+    const altFactor = Math.min(1.0, (y - 26.0) / 10.0);
     const patchNoise = perlin2D(x * 0.045, z * 0.045);
-    // Snow only settles on gentler ledges (slope < 0.48)
-    if (patchNoise > 0.18 && slope < 0.48) {
-      const slopeFactor = 1.0 - slope / 0.48;
-      const snowIntensity = Math.min(0.78, (patchNoise - 0.18) * 1.6 * altFactor * slopeFactor);
-      const snowR = 0.84, snowG = 0.88, snowB = 0.94;
+    if (patchNoise > 0.12 && slope < 0.52) {
+      const slopeFactor = 1.0 - slope / 0.52;
+      const snowIntensity = Math.min(0.85, (patchNoise - 0.12) * 1.8 * altFactor * slopeFactor);
+      const snowR = 0.88, snowG = 0.91, snowB = 0.96;
       r = r * (1 - snowIntensity) + snowR * snowIntensity;
       g = g * (1 - snowIntensity) + snowG * snowIntensity;
       b = b * (1 - snowIntensity) + snowB * snowIntensity;
@@ -1076,51 +1170,64 @@ function getTerrainHeight(x, z) {
 
   let corridorY = py;
 
-  // ROAD SURFACE: Flat carved mountain road (width 4.4m, half-width 2.2m)
-  if (Math.abs(s) <= 2.2) {
+  // ROAD SURFACE: Flat carved mountain road (width 5.0m, half-width 2.5m)
+  if (Math.abs(s) <= 2.5) {
     corridorY = py;
   }
-  // PAHAR (STEEP ROCK SLOPE) ALWAYS ON THE LEFT OF THE ROAD TANGENT (s > 2.2m)
-  else if (s > 2.2) {
+  // LEFT SIDE (MOUNTAIN/CLIFF SIDE, s > 2.5m):
+  // 0.3m gravel shoulder up to 2.8m, then rocky slopes, forest clearings, rising to distant alpine ridges
+  else if (s > 2.5) {
     if (s <= 3.8) {
-      const shoulderT = (s - 2.2) / 1.6;
-      corridorY = py + shoulderT * shoulderT * 0.8;
+      const shoulderT = (s - 2.5) / 1.3;
+      corridorY = py + shoulderT * shoulderT * 0.45;
     } else {
-      const cliffDist = s - 3.8;
-      const rockRise = Math.min(38.0, Math.pow(cliffDist * 0.75, 1.25) * 2.4 + 0.8);
-      const crag = perlin2D(x * 0.08, z * 0.08) * 1.8;
-      corridorY = py + rockRise + crag;
+      const hillDist = s - 3.8;
+      // Rolling natural rocky slopes that don't block visibility, with occasional pine terraces
+      const slopeRise = Math.min(32.0, Math.pow(hillDist * 0.45, 1.15) * 1.6 + 0.45);
+      const cragNoise = perlin2D(x * 0.04, z * 0.04) * 2.2 + perlin2D(x * 0.1, z * 0.1) * 0.9;
+      // Distant snow-capped ridgeline rise beyond 90m from road
+      let ridgeBonus = 0;
+      if (hillDist > 90.0) {
+        ridgeBonus = Math.min(48.0, Math.pow((hillDist - 90.0) * 0.3, 1.25) * 1.4);
+      }
+      corridorY = py + slopeRise + cragNoise + ridgeBonus;
     }
   }
-  // KHAI (RAVINE, ~20M DEEP) ALWAYS ON THE RIGHT WITH 2-3M GENTLE LEDGE BEFORE THE DROP (s < -2.2m)
+  // RIGHT SIDE (KHAI / RAVINE SIDE, s < -2.5m):
+  // 0.3m shoulder up to 2.8m, 3m gentle grassy ledge (2.8m - 5.8m), then steep ravine plunge to -18m,
+  // and beyond the ravine (>38m) rolling green hills, frozen river valley, and distant hills
   else {
     const rightDist = -s;
-    if (rightDist <= 4.8) {
-      const ledgeT = (rightDist - 2.2) / 2.6;
-      corridorY = py - ledgeT * 0.35;
+    if (rightDist <= 5.8) {
+      const ledgeT = (rightDist - 2.5) / 3.3;
+      corridorY = py - ledgeT * 0.25;
     } else {
-      const dropDist = rightDist - 4.8;
+      const dropDist = rightDist - 5.8;
 
       // Hidden return route switchback: carved along canyon wall near z in [-490, -420]
-      const isSwitchbackZone = z < -420 && z > -490 && rightDist >= 4.8 && rightDist <= 16.0;
+      const isSwitchbackZone = z < -420 && z > -490 && rightDist >= 5.8 && rightDist <= 18.0;
       if (isSwitchbackZone) {
         const rampT = Math.max(0, Math.min(1.0, (-420 - z) / 70.0));
-        const rampY = (py - 20.35) + (1.0 - rampT) * 20.0;
-        corridorY = Math.max(rampY, py - 20.35);
-      } else if (dropDist < 12.0) {
-        const dropT = dropDist / 12.0;
-        const plunge = (dropT * dropT * (3.0 - 2.0 * dropT)) * 20.0;
-        corridorY = py - 0.35 - plunge;
+        const rampY = (py - 18.0) + (1.0 - rampT) * 18.0;
+        corridorY = Math.max(rampY, py - 18.0);
+      } else if (dropDist < 14.0) {
+        const dropT = dropDist / 14.0;
+        const plunge = (dropT * dropT * (3.0 - 2.0 * dropT)) * 18.0;
+        corridorY = py - 0.25 - plunge;
       } else {
-        const canyonDist = dropDist - 12.0;
-        const floorDepth = 20.35;
-        const canyonNoise = perlin2D(x * 0.05, z * 0.05) * 1.6;
-        if (canyonDist < 18.0) {
+        const canyonDist = dropDist - 14.0;
+        const floorDepth = 18.0;
+        const canyonNoise = perlin2D(x * 0.05, z * 0.05) * 1.5;
+        if (canyonDist < 22.0) {
+          // Ravine canyon floor / frozen valley bottom
           corridorY = py - floorDepth + canyonNoise;
         } else {
-          const climbDist = canyonDist - 18.0;
-          const climb = Math.min(26.0, Math.pow(climbDist * 0.4, 1.25) * 1.6);
-          corridorY = py - floorDepth + canyonNoise + climb;
+          // Beyond the ravine: gentle rolling green hills and open frozen river valley
+          const valleyDist = canyonDist - 22.0;
+          const rollingHills = perlin2D((x + 120) * 0.015, (z + 80) * 0.015) * 8.5
+                             + perlin2D(x * 0.035, z * 0.035) * 3.5;
+          const hillRise = Math.min(22.0, Math.pow(valleyDist * 0.35, 1.1) * 1.1);
+          corridorY = (py - 18.0) + 7.0 + hillRise + rollingHills;
         }
       }
     }
@@ -1131,31 +1238,41 @@ function getTerrainHeight(x, z) {
     corridorY += Math.min(26.0, Math.pow((z - 560) * 0.85, 1.3));
   }
 
-  // ZONE 2: Flat Whispering Meadow Clearing (smooth walking surface for alternate trail)
-  if (z > 190 && z < 290 && x > 30 && x < 130) {
-    const meadowDist = Math.hypot(x - 80, z - 240);
-    if (meadowDist < 48) {
-      const meadowWeight = Math.max(0, 1.0 - meadowDist / 48);
-      const flatMeadowY = 10.2 + perlin2D(x * 0.04, z * 0.04) * 0.6;
+  // ZONE 2: Wide Open Whispering Meadow Clearing (green clearing with stream crossing)
+  if (z > 170 && z < 310 && x > 20 && x < 150) {
+    const meadowDist = Math.hypot(x - 85, z - 240);
+    if (meadowDist < 60) {
+      const meadowWeight = Math.max(0, 1.0 - meadowDist / 60);
+      const flatMeadowY = 10.2 + perlin2D(x * 0.035, z * 0.035) * 0.5;
       corridorY = corridorY * (1.0 - meadowWeight * 0.75) + flatMeadowY * (meadowWeight * 0.75);
     }
   }
 
-  // ZONE 3: Glacial Lake Basin & River Gorge (drops down 4.5m below road for frozen lake ice)
-  const lakeDist = Math.hypot(x - (-35), z - 40);
-  if (lakeDist < 65) {
-    const lakeWeight = Math.max(0, 1.0 - lakeDist / 65);
-    const lakeFloorY = 4.8 + perlin2D(x * 0.03, z * 0.03) * 0.4;
-    // Don't carve the road bridge path itself if roadDist < 4.0
-    if (road.roadDist > 4.0) {
-      corridorY = corridorY * (1.0 - lakeWeight * 0.85) + lakeFloorY * (lakeWeight * 0.85);
+  // ZONE 3: Glacial Lake Basin (~80m radius oval basin & river gorge)
+  const dxLake = (x - (-35)) / 1.15;
+  const dzLake = (z - 40) / 0.95;
+  const lakeDist = Math.hypot(dxLake, dzLake);
+  if (lakeDist < 82) {
+    const lakeWeight = Math.max(0, 1.0 - lakeDist / 82);
+    const lakeFloorY = 4.8 + perlin2D(x * 0.03, z * 0.03) * 0.3;
+    // Don't carve the road bridge path itself if roadDist < 4.5
+    if (road.roadDist > 4.5) {
+      corridorY = corridorY * (1.0 - lakeWeight * 0.88) + lakeFloorY * (lakeWeight * 0.88);
     }
+  }
+
+  // ZONE 3-4 BORDER: Abandoned Village Plateau (natural ground for 14-18 houses)
+  const villageDist = Math.hypot(x - 160, z - 245);
+  if (villageDist < 55) {
+    const vWeight = Math.max(0, 1.0 - villageDist / 55);
+    const vPlateauY = 12.8 + perlin2D(x * 0.03, z * 0.03) * 0.4;
+    corridorY = corridorY * (1.0 - vWeight * 0.7) + vPlateauY * (vWeight * 0.7);
   }
 
   // ZONE 4: Hunter Camp Clearing Plateau (smooth terrain around cabin & workshop)
   const campDist = Math.hypot(x - (-70), z - (-235));
-  if (campDist < 45) {
-    const campWeight = Math.max(0, 1.0 - campDist / 45);
+  if (campDist < 48) {
+    const campWeight = Math.max(0, 1.0 - campDist / 48);
     const campPlateauY = 18.0 + perlin2D(x * 0.04, z * 0.04) * 0.5;
     corridorY = corridorY * (1.0 - campWeight * 0.7) + campPlateauY * (campWeight * 0.7);
   }
@@ -1168,8 +1285,8 @@ function getTerrainHeight(x, z) {
     corridorY = corridorY * (1.0 - summitWeight) + plateauY * summitWeight;
   }
 
-  // Smooth blend between road corridor and base heightmap terrain
-  const blendT = Math.max(0, Math.min(1, (road.roadDist - 36) / 36));
+  // Smooth blend between road corridor and base terrain out to 80m
+  const blendT = Math.max(0, Math.min(1, (road.roadDist - 45) / 45));
   const smoothBlend = blendT * blendT * (3 - 2 * blendT);
 
   return corridorY * (1.0 - smoothBlend) + baseTerrainY * smoothBlend;
@@ -1185,24 +1302,24 @@ function createSunCoronaTexture() {
   const ctx = canvas.getContext('2d');
   const cx = 256, cy = 256;
 
-  // Multi-stop soft golden radial glow
+  // Gentle warm radial glow without blinding whiteout
   const grad = ctx.createRadialGradient(cx, cy, 14, cx, cy, 256);
-  grad.addColorStop(0.0, 'rgba(255, 255, 240, 1.0)');
-  grad.addColorStop(0.12, 'rgba(255, 215, 120, 0.9)');
-  grad.addColorStop(0.32, 'rgba(255, 140, 45, 0.55)');
-  grad.addColorStop(0.65, 'rgba(255, 90, 20, 0.22)');
-  grad.addColorStop(1.0, 'rgba(255, 60, 0, 0.0)');
+  grad.addColorStop(0.0, 'rgba(255, 235, 180, 0.55)');
+  grad.addColorStop(0.20, 'rgba(255, 180, 90, 0.35)');
+  grad.addColorStop(0.50, 'rgba(240, 130, 45, 0.15)');
+  grad.addColorStop(0.80, 'rgba(220, 90, 20, 0.05)');
+  grad.addColorStop(1.0, 'rgba(200, 60, 0, 0.0)');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, 512, 512);
 
-  // Soft god-rays crepuscular spokes
+  // Soft subtle god-rays crepuscular spokes
   ctx.save();
   ctx.translate(cx, cy);
-  for (let i = 0; i < 20; i++) {
-    const angle = (i / 20) * Math.PI * 2;
-    const rayLen = 252;
-    const rayWidth = 0.065 + (i % 2) * 0.035;
-    ctx.fillStyle = 'rgba(255, 185, 75, 0.26)';
+  for (let i = 0; i < 16; i++) {
+    const angle = (i / 16) * Math.PI * 2;
+    const rayLen = 240;
+    const rayWidth = 0.045 + (i % 2) * 0.02;
+    ctx.fillStyle = 'rgba(255, 195, 100, 0.08)';
     ctx.beginPath();
     ctx.moveTo(0, 0);
     ctx.arc(0, 0, rayLen, angle - rayWidth, angle + rayWidth);
@@ -1370,6 +1487,66 @@ function createWaterMaterial() {
       if (waveCrest > 0.62) {
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.94, 0.98, 1.0), (waveCrest - 0.62) * 2.4);
       }
+      `
+    );
+  };
+
+  return mat;
+}
+
+// ---------------------------------------------------------------------------
+// ANIMATED ICE LAKE SHADER (Subtle crystalline shimmer, translucent depth & ice cracks)
+// ---------------------------------------------------------------------------
+function createIceLakeMaterial() {
+  const customUniforms = {
+    uTime: { value: 0 }
+  };
+
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x93c5fd,
+    roughness: 0.22,
+    metalness: 0.65,
+    transparent: true,
+    opacity: 0.88,
+    side: THREE.DoubleSide
+  });
+
+  mat.userData.customUniforms = customUniforms;
+
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = customUniforms.uTime;
+    shader.vertexShader = `
+      varying vec3 vWorldPos;
+      ${shader.vertexShader}
+    `;
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `
+      #include <begin_vertex>
+      vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+      `
+    );
+
+    shader.fragmentShader = `
+      uniform float uTime;
+      varying vec3 vWorldPos;
+      ${shader.fragmentShader}
+    `;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <color_fragment>',
+      `
+      #include <color_fragment>
+      // Multi-layer ice crystal refraction and sun specular shimmer
+      vec2 iceUv = vWorldPos.xz * 0.08;
+      float shimmer1 = sin(iceUv.x * 24.0 + iceUv.y * 18.0 + uTime * 1.5);
+      float shimmer2 = cos(iceUv.x * 32.0 - iceUv.y * 28.0 - uTime * 1.2);
+      float crystalGlitter = max(0.0, shimmer1 * shimmer2);
+      crystalGlitter = pow(crystalGlitter, 4.0);
+
+      // Deep cyan glacial gradient toward center
+      vec3 deepIce = vec3(0.18, 0.52, 0.78);
+      vec3 brightGlaze = vec3(0.85, 0.95, 1.0);
+      diffuseColor.rgb = mix(deepIce, brightGlaze, 0.35 + crystalGlitter * 0.45);
       `
     );
   };
@@ -1723,6 +1900,154 @@ class DeerHerd {
 }
 
 // ---------------------------------------------------------------------------
+// ANIMALS: HORSE HERD (6 Grazing Horses in Zone 2 Meadow with Idle Animation)
+// ---------------------------------------------------------------------------
+class HorseHerd {
+  constructor(scene) {
+    this.scene = scene;
+    this.horses = [];
+    this.initHerd();
+  }
+
+  initHerd() {
+    const horseColors = [
+      0x5c3a21, // Chestnut brown
+      0x2c1d11, // Dark bay
+      0x8b5a2b, // Light sorrel
+      0xd9cfc1, // Dappled palomino / light coat
+      0x1a1a1a, // Midnight black
+      0x6b4423  // Wild bay
+    ];
+    const maneMat = new THREE.MeshStandardMaterial({ color: 0x18120c, roughness: 0.9 });
+    const muzzleMat = new THREE.MeshStandardMaterial({ color: 0x221810, roughness: 0.95 });
+    const hoofMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
+
+    // 6 Horses grazing in Zone 2 Meadow clearing (x: 45 to 110, z: 215 to 275)
+    const positions = [
+      { x: 52, z: 232, rot: 0.4 },
+      { x: 68, z: 250, rot: -1.1 },
+      { x: 84, z: 228, rot: 1.8 },
+      { x: 96, z: 262, rot: -0.6 },
+      { x: 108, z: 242, rot: 2.5 },
+      { x: 74, z: 270, rot: 0.9 }
+    ];
+
+    positions.forEach((p, idx) => {
+      const coatMat = new THREE.MeshStandardMaterial({
+        color: horseColors[idx % horseColors.length],
+        roughness: 0.78,
+        metalness: 0.05
+      });
+
+      const group = new THREE.Group();
+      const gy = getTerrainHeight(p.x, p.z);
+      group.position.set(p.x, gy, p.z);
+      group.rotation.y = p.rot;
+
+      // Horse Torso / Barrel
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.95, 1.0, 2.1), coatMat);
+      body.position.y = 1.45;
+      body.castShadow = true;
+      group.add(body);
+
+      // Withers / Rump curves
+      const rump = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.9, 0.7), coatMat);
+      rump.position.set(0, 1.5, 0.9);
+      group.add(rump);
+
+      // Tail
+      const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.16, 1.1, 5), maneMat);
+      tail.position.set(0, 1.25, 1.4);
+      tail.rotation.x = 0.35;
+      group.add(tail);
+
+      // Neck & Head Pivot Group (lowered for grazing)
+      const neckGroup = new THREE.Group();
+      neckGroup.position.set(0, 1.7, -0.9);
+
+      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.34, 1.0, 6), coatMat);
+      neck.position.set(0, -0.2, -0.3);
+      neck.rotation.x = 0.85; // Natural graze tilt
+      neckGroup.add(neck);
+
+      // Mane along neck
+      const mane = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.9, 0.3), maneMat);
+      mane.position.set(0, -0.05, -0.2);
+      mane.rotation.x = 0.85;
+      neckGroup.add(mane);
+
+      // Head
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.45, 0.8), coatMat);
+      head.position.set(0, -0.65, -0.7);
+      head.rotation.x = 0.35;
+      neckGroup.add(head);
+
+      // Muzzle
+      const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.4), muzzleMat);
+      muzzle.position.set(0, -0.8, -1.05);
+      neckGroup.add(muzzle);
+
+      // Ears
+      [-0.15, 0.15].forEach(ex => {
+        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.26, 4), coatMat);
+        ear.position.set(ex, -0.42, -0.55);
+        ear.rotation.x = 0.2;
+        ear.rotation.z = ex > 0 ? -0.25 : 0.25;
+        neckGroup.add(ear);
+      });
+
+      group.add(neckGroup);
+
+      // 4 Strong Legs
+      const legPositions = [
+        [-0.32, -0.7],
+        [0.32, -0.7],
+        [-0.32, 0.75],
+        [0.32, 0.75]
+      ];
+      legPositions.forEach(([lx, lz]) => {
+        const legUpper = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.09, 0.8, 6), coatMat);
+        legUpper.position.set(lx, 1.05, lz);
+        legUpper.castShadow = true;
+        group.add(legUpper);
+
+        const legLower = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.07, 0.7, 6), coatMat);
+        legLower.position.set(lx, 0.4, lz);
+        legLower.castShadow = true;
+        group.add(legLower);
+
+        const hoof = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.1, 0.18, 6), hoofMat);
+        hoof.position.set(lx, 0.09, lz);
+        group.add(hoof);
+      });
+
+      this.scene.add(group);
+
+      this.horses.push({
+        mesh: group,
+        neck: neckGroup,
+        basePos: new THREE.Vector3(p.x, gy, p.z),
+        phase: Math.random() * Math.PI * 2,
+        grazeSpeed: 0.8 + Math.random() * 0.4
+      });
+    });
+  }
+
+  update(delta) {
+    const time = performance.now() * 0.001;
+    this.horses.forEach(h => {
+      // Natural rhythmic head bobbing while munching meadow grass
+      const bob = Math.sin(time * h.grazeSpeed + h.phase);
+      const microSway = Math.cos(time * 0.6 + h.phase) * 0.06;
+      h.neck.rotation.x = 0.15 + bob * 0.12;
+      h.neck.rotation.y = microSway;
+      // Slight gentle breathing shift
+      h.mesh.position.y = getTerrainHeight(h.basePos.x, h.basePos.z) + Math.sin(time * 1.2 + h.phase) * 0.015;
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // ANIMALS: RABBIT COLONY (Arctic Hares, Hopping Motion & Brush Scatter)
 // ---------------------------------------------------------------------------
 class RabbitColony {
@@ -2059,6 +2384,26 @@ class FishSchool {
 // ---------------------------------------------------------------------------
 // REAL FLAME & EMBER PARTICLE SYSTEM (Torch & Campfire Safe Zones)
 // ---------------------------------------------------------------------------
+// Shared soft circular particle texture for round, glowing fire embers & smoke
+let _flameParticleTextureCache = null;
+function getFlameParticleTexture() {
+  if (_flameParticleTextureCache) return _flameParticleTextureCache;
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+  grad.addColorStop(0.25, 'rgba(255, 235, 180, 0.85)');
+  grad.addColorStop(0.55, 'rgba(255, 120, 20, 0.4)');
+  grad.addColorStop(0.85, 'rgba(180, 40, 10, 0.1)');
+  grad.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 64, 64);
+  _flameParticleTextureCache = new THREE.CanvasTexture(canvas);
+  return _flameParticleTextureCache;
+}
+
 class FlameParticleSystem {
   constructor(scene, count = 28, spread = 0.35, speedY = 1.4, size = 0.22) {
     this.scene = scene;
@@ -2093,6 +2438,7 @@ class FlameParticleSystem {
 
     const mat = new THREE.PointsMaterial({
       size: size,
+      map: getFlameParticleTexture(),
       vertexColors: true,
       transparent: true,
       opacity: 0.88,
@@ -2243,29 +2589,130 @@ class FirstPersonArmsSystem {
 
     // 1. TORCH
     this.torchGroup = new THREE.Group();
-    const stickMat = new THREE.MeshStandardMaterial({ color: 0x4a2e18, roughness: 0.95 });
-    const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.028, 0.58, 6), stickMat);
-    stick.position.set(0, 0.12, -0.02);
-    stick.rotation.x = 0.22;
-    this.torchGroup.add(stick);
+    // Torch handle & stick aligned in a clean sub-group with natural grip angle
+    this.torchMount = new THREE.Group();
+    this.torchMount.position.set(0, 0.10, -0.02);
+    this.torchMount.rotation.x = 0.20;
+    this.torchGroup.add(this.torchMount);
 
-    const clothMat = new THREE.MeshStandardMaterial({ color: 0x221811, roughness: 0.95 });
-    const clothWrap = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.032, 0.12, 8), clothMat);
-    clothWrap.position.set(0, 0.36, -0.06);
-    clothWrap.rotation.x = 0.22;
-    this.torchGroup.add(clothWrap);
+    // Dark rustic wood stick
+    const stickMat = new THREE.MeshStandardMaterial({
+      color: 0x3d2314,
+      roughness: 0.9,
+      metalness: 0.05
+    });
+    const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.024, 0.54, 8), stickMat);
+    stick.position.set(0, 0, 0);
+    this.torchMount.add(stick);
 
-    const flameMat = new THREE.MeshBasicMaterial({ color: 0xff9900 });
-    this.flameMesh = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.15, 8), flameMat);
-    this.flameMesh.position.set(0, 0.44, -0.08);
-    this.flameMesh.rotation.x = 0.22;
-    this.torchGroup.add(this.flameMesh);
+    // Pitch-soaked cloth head wrapping wrapped tightly around the top of the stick
+    const clothMat = new THREE.MeshStandardMaterial({
+      color: 0x1c140d,
+      roughness: 0.95,
+      bumpScale: 0.05
+    });
+    const clothWrap = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.026, 0.12, 10), clothMat);
+    clothWrap.position.set(0, 0.22, 0);
+    this.torchMount.add(clothWrap);
+
+    // Glowing ember collar at the base of the flame
+    const collarMat = new THREE.MeshBasicMaterial({
+      color: 0xff3b00
+    });
+    const emberCollar = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.030, 0.03, 10), collarMat);
+    emberCollar.position.set(0, 0.27, 0);
+    this.torchMount.add(emberCollar);
+
+    // Main flame cluster root: positioned directly on top of the cloth wrap at y = 0.28
+    this.flameMesh = new THREE.Group();
+    this.flameMesh.position.set(0, 0.28, 0);
+    this.torchMount.add(this.flameMesh);
+
+    // 1) Outer dancing flame (warm fiery orange / red gradient feel)
+    const outerFlameMat = new THREE.MeshBasicMaterial({
+      color: 0xff5500,
+      transparent: true,
+      opacity: 0.88,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    this.outerFlame = new THREE.Mesh(new THREE.ConeGeometry(0.046, 0.18, 10), outerFlameMat);
+    this.outerFlame.position.set(0, 0.09, 0);
+    this.flameMesh.add(this.outerFlame);
+
+    // 2) Inner intense yellow flame core
+    const innerFlameMat = new THREE.MeshBasicMaterial({
+      color: 0xffe066,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    this.innerFlame = new THREE.Mesh(new THREE.ConeGeometry(0.026, 0.13, 8), innerFlameMat);
+    this.innerFlame.position.set(0, 0.065, 0);
+    this.flameMesh.add(this.innerFlame);
+
+    // 3) White-hot incandescent ignition tip
+    const tipMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    this.tipFlame = new THREE.Mesh(new THREE.SphereGeometry(0.015, 6, 6), tipMat);
+    this.tipFlame.position.set(0, 0.04, 0);
+    this.tipFlame.scale.set(0.8, 1.4, 0.8);
+    this.flameMesh.add(this.tipFlame);
+
+    // 4) Micro-sparks / embers system anchored directly to the torch head
+    const emberCount = 12;
+    const emberGeom = new THREE.BufferGeometry();
+    const emberPositions = new Float32Array(emberCount * 3);
+    const emberColors = new Float32Array(emberCount * 3);
+    this.torchEmbersData = [];
+
+    for (let i = 0; i < emberCount; i++) {
+      emberPositions[i * 3] = (Math.random() - 0.5) * 0.03;
+      emberPositions[i * 3 + 1] = 0.05 + Math.random() * 0.15;
+      emberPositions[i * 3 + 2] = (Math.random() - 0.5) * 0.03;
+
+      const isGold = Math.random() > 0.4;
+      emberColors[i * 3] = 1.0;
+      emberColors[i * 3 + 1] = isGold ? 0.8 : 0.35;
+      emberColors[i * 3 + 2] = isGold ? 0.2 : 0.05;
+
+      this.torchEmbersData.push({
+        baseX: (Math.random() - 0.5) * 0.03,
+        baseZ: (Math.random() - 0.5) * 0.03,
+        speedY: 0.18 + Math.random() * 0.22,
+        wobbleSpeed: 4 + Math.random() * 6,
+        phase: Math.random() * Math.PI * 2,
+        height: Math.random() * 0.22
+      });
+    }
+
+    emberGeom.setAttribute('position', new THREE.BufferAttribute(emberPositions, 3));
+    emberGeom.setAttribute('color', new THREE.BufferAttribute(emberColors, 3));
+
+    const emberMat = new THREE.PointsMaterial({
+      size: 0.035,
+      map: getFlameParticleTexture(),
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    this.torchEmbersPoints = new THREE.Points(emberGeom, emberMat);
+    this.torchEmbersPoints.position.set(0, 0.05, 0);
+    this.flameMesh.add(this.torchEmbersPoints);
 
     // Dedicated PointLight at the flame head that lights up the hands and surroundings
-    this.handTorchLight = new THREE.PointLight(0xff9433, 2.6, 24, 1.8);
-    this.handTorchLight.position.set(0, 0.46, -0.08);
+    this.handTorchLight = new THREE.PointLight(0xff9e44, 4.5, 32, 1.4);
+    this.handTorchLight.position.set(0, 0.35, 0);
     this.handTorchLight.castShadow = false;
-    this.torchGroup.add(this.handTorchLight);
+    this.torchMount.add(this.handTorchLight);
 
     this.itemContainer.add(this.torchGroup);
 
@@ -2323,12 +2770,46 @@ class FirstPersonArmsSystem {
   update(delta, isMoving, isSprinting, isTorchLit) {
     if (this.torchGroup.visible) {
       this.flameMesh.visible = isTorchLit;
-      this.handTorchLight.intensity = isTorchLit ? 2.6 : 0;
+      this.handTorchLight.intensity = isTorchLit ? 4.5 : 0;
       if (isTorchLit) {
         const time = performance.now() * 0.001;
-        const flick = Math.sin(time * 23) * 0.2 + Math.sin(time * 41) * 0.15;
-        this.handTorchLight.intensity = Math.max(1.8, 2.6 + flick);
-        this.flameMesh.scale.set(1.0 + flick * 0.15, 1.0 + flick * 0.25, 1.0 + flick * 0.15);
+        const flick = Math.sin(time * 24) * 0.18 + Math.sin(time * 43) * 0.12 + Math.sin(time * 11) * 0.08;
+        this.handTorchLight.intensity = Math.max(3.2, 4.5 + flick * 2.0);
+
+        // Natural, organic flame lick and stretch directly atop the torch head
+        if (this.outerFlame) {
+          const wobbleX = Math.sin(time * 16) * 0.06;
+          const wobbleZ = Math.cos(time * 19) * 0.06;
+          this.outerFlame.scale.set(1.0 + flick * 0.15 + wobbleX * 0.5, 1.0 + flick * 0.35, 1.0 + flick * 0.15 + wobbleZ * 0.5);
+          this.outerFlame.rotation.z = Math.sin(time * 12) * 0.08;
+          this.outerFlame.rotation.x = Math.cos(time * 14) * 0.08;
+        }
+
+        if (this.innerFlame) {
+          this.innerFlame.scale.set(1.0 + flick * 0.22, 1.0 + flick * 0.30, 1.0 + flick * 0.22);
+          this.innerFlame.rotation.z = Math.sin(time * 18) * 0.05;
+        }
+
+        if (this.tipFlame) {
+          this.tipFlame.scale.set(0.8 + flick * 0.12, 1.3 + flick * 0.20, 0.8 + flick * 0.12);
+        }
+
+        // Animate torch embers rising from tip and resetting smoothly
+        if (this.torchEmbersPoints && this.torchEmbersData) {
+          const pos = this.torchEmbersPoints.geometry.attributes.position;
+          for (let i = 0; i < this.torchEmbersData.length; i++) {
+            const ed = this.torchEmbersData[i];
+            ed.height += ed.speedY * delta;
+            if (ed.height > 0.25) {
+              ed.height = 0.02;
+              ed.baseX = (Math.random() - 0.5) * 0.03;
+              ed.baseZ = (Math.random() - 0.5) * 0.03;
+            }
+            const wobble = Math.sin(time * ed.wobbleSpeed + ed.phase) * 0.012;
+            pos.setXYZ(i, ed.baseX + wobble, ed.height, ed.baseZ + wobble * 0.5);
+          }
+          pos.needsUpdate = true;
+        }
       }
     }
 
@@ -2393,6 +2874,209 @@ class FirstPersonArmsSystem {
 
     this.root.position.set(posX, posY, posZ);
     this.root.rotation.set(rotX, rotY, rotZ);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SOLSTICE VILLAGE ELDER KAELEN (Animated NPC Guide)
+// ---------------------------------------------------------------------------
+class ElderKaelenNPC {
+  constructor(scene, x = 158.0, z = 246.0) {
+    this.scene = scene;
+    this.x = x;
+    this.z = z;
+    this.y = getTerrainHeight(x, z);
+    this.root = new THREE.Group();
+    this.root.position.set(this.x, this.y, this.z);
+    this.scene.add(this.root);
+
+    this.idleTime = 0;
+    this.hasGivenTorch = false;
+    this.buildElder();
+  }
+
+  buildElder() {
+    // Materials for Elder Kaelen: Aged woven wool, weathered leather, golden fur trim, runic staff
+    const robeMat = new THREE.MeshStandardMaterial({ color: 0x3b2d54, roughness: 0.85 }); // Deep mystic violet/indigo robe
+    const underRobeMat = new THREE.MeshStandardMaterial({ color: 0x1f172f, roughness: 0.9 });
+    const furTrimMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.95 }); // White winter fur
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xd4a373, roughness: 0.8 });
+    const beardMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.95 }); // Long snowy-white elder beard
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x451a03, roughness: 0.9 });
+    const runeCrystalMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 }); // Glowing blue runic crest
+    const hoodMat = new THREE.MeshStandardMaterial({ color: 0x2e2042, roughness: 0.85 });
+
+    // Lower Body / Flowing Robes
+    const robeBase = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.52, 1.0, 10), underRobeMat);
+    robeBase.position.y = 0.5;
+    robeBase.castShadow = true;
+    robeBase.receiveShadow = true;
+    this.root.add(robeBase);
+
+    // Glowing Sacred Beacon Ring at Elder's Feet (Blinks/Pulses as Visual Quest Hint)
+    const ringGeom = new THREE.RingGeometry(1.2, 1.5, 36);
+    ringGeom.rotateX(-Math.PI / 2);
+    this.beaconMat = new THREE.MeshBasicMaterial({
+      color: 0xf59e0b,
+      transparent: true,
+      opacity: 0.55,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    this.beaconRing = new THREE.Mesh(ringGeom, this.beaconMat);
+    this.beaconRing.position.y = 0.05;
+    this.root.add(this.beaconRing);
+
+    // Torso & Great Winter Mantle
+    this.torso = new THREE.Group();
+    this.torso.position.y = 0.95;
+
+    const chest = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.55, 0.32), robeMat);
+    chest.position.y = 0.28;
+    chest.castShadow = true;
+    this.torso.add(chest);
+
+    // Heavy Fur Mantle Shawl over shoulders
+    const furShawl = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.18, 0.38), furTrimMat);
+    furShawl.position.y = 0.46;
+    furShawl.castShadow = true;
+    this.torso.add(furShawl);
+
+    // Head, Hood & Snowy Long Beard
+    this.head = new THREE.Group();
+    this.head.position.y = 0.62;
+
+    const face = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.22, 0.2), skinMat);
+    face.position.set(0, 0.1, 0.02);
+    this.head.add(face);
+
+    // Deep Winter Hood draped over head
+    const hood = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.26), hoodMat);
+    hood.position.set(0, 0.14, -0.02);
+    this.head.add(hood);
+
+    // Long Flowing White Beard
+    const beard = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.38, 5), beardMat);
+    beard.rotation.x = 0.2;
+    beard.position.set(0, -0.04, 0.12);
+    this.head.add(beard);
+
+    this.torso.add(this.head);
+
+    // Left Arm (holding ancient carved staff)
+    this.armL = new THREE.Group();
+    this.armL.position.set(-0.28, 0.42, 0);
+    const sleeveL = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 0.48, 8), robeMat);
+    sleeveL.position.y = -0.22;
+    this.armL.add(sleeveL);
+
+    // Elder Staff
+    const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 1.9, 8), woodMat);
+    staff.position.set(-0.06, -0.15, 0.22);
+    staff.rotation.x = 0.1;
+    this.armL.add(staff);
+
+    // Glowing Blue Sun-Rune Crystal atop Staff
+    const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.12, 0), runeCrystalMat);
+    crystal.position.set(-0.06, 0.85, 0.22);
+    this.armL.add(crystal);
+
+    const staffLight = new THREE.PointLight(0x38bdf8, 1.8, 8);
+    staffLight.position.set(-0.06, 0.9, 0.22);
+    this.armL.add(staffLight);
+
+    this.torso.add(this.armL);
+
+    // Right Arm (outstretched holding the Sacred Torch or beckoning)
+    this.armR = new THREE.Group();
+    this.armR.position.set(0.28, 0.42, 0);
+    const sleeveR = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 0.48, 8), robeMat);
+    sleeveR.position.y = -0.22;
+    this.armR.add(sleeveR);
+
+    // Sacred Torch Offered by Elder
+    this.torchOfferGroup = new THREE.Group();
+    this.torchOfferGroup.position.set(0.05, -0.4, 0.25);
+    this.torchOfferGroup.rotation.x = 0.5;
+
+    const torchStick = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.6, 6), woodMat);
+    this.torchOfferGroup.add(torchStick);
+
+    const torchHead = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.04, 0.14, 8), new THREE.MeshStandardMaterial({ color: 0x1f172f, roughness: 0.9 }));
+    torchHead.position.y = 0.3;
+    this.torchOfferGroup.add(torchHead);
+
+    this.flameOffer = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.18, 8), new THREE.MeshBasicMaterial({ color: 0xffaa00 }));
+    this.flameOffer.position.y = 0.42;
+    this.torchOfferGroup.add(this.flameOffer);
+
+    this.torchLightOffer = new THREE.PointLight(0xff8822, 2.8, 10);
+    this.torchLightOffer.position.y = 0.45;
+    this.torchOfferGroup.add(this.torchLightOffer);
+
+    this.armR.add(this.torchOfferGroup);
+    this.torso.add(this.armR);
+
+    this.root.add(this.torso);
+
+    // Face towards village bonfire square center (towards (160, 248))
+    this.root.lookAt(160.0, this.y, 248.0);
+  }
+
+  update(delta, playerPos) {
+    this.idleTime += delta;
+
+    // Gentle breathing idle animation
+    if (this.torso) {
+      this.torso.position.y = 0.95 + Math.sin(this.idleTime * 1.8) * 0.02;
+    }
+    if (this.head) {
+      this.head.rotation.x = Math.sin(this.idleTime * 1.4) * 0.04;
+      this.head.rotation.z = Math.cos(this.idleTime * 0.9) * 0.02;
+    }
+    if (this.armR) {
+      // Beckoning / gentle gesture
+      this.armR.rotation.x = -0.25 + Math.sin(this.idleTime * 2.0) * 0.08;
+      this.armR.rotation.z = 0.15 + Math.cos(this.idleTime * 1.6) * 0.04;
+    }
+    if (this.flameOffer) {
+      const s = 1.0 + Math.sin(this.idleTime * 14.0) * 0.15;
+      this.flameOffer.scale.set(s, s * (1.0 + Math.cos(this.idleTime * 18.0) * 0.2), s);
+    }
+    if (this.torchLightOffer) {
+      this.torchLightOffer.intensity = 2.4 + Math.sin(this.idleTime * 15.0) * 0.6;
+    }
+    // Gentle pulsating/blinking visual hint on the beacon ring
+    if (this.beaconRing && this.beaconMat && !this.hasGivenTorch) {
+      const pulse = 0.35 + 0.35 * Math.sin(this.idleTime * 4.0);
+      this.beaconMat.opacity = pulse;
+      const s = 1.0 + 0.12 * Math.sin(this.idleTime * 4.0);
+      this.beaconRing.scale.set(s, s, s);
+    }
+
+    // Turn head to gaze towards player if nearby
+    if (playerPos) {
+      const dist = this.root.position.distanceTo(playerPos);
+      if (dist < 10.0 && this.head) {
+        const dx = playerPos.x - this.root.position.x;
+        const dz = playerPos.z - this.root.position.z;
+        const targetAngle = Math.atan2(dx, dz) - this.root.rotation.y;
+        this.head.rotation.y = THREE.MathUtils.clamp(targetAngle, -0.65, 0.65);
+      }
+    }
+  }
+
+  handOverTorch() {
+    this.hasGivenTorch = true;
+    if (this.beaconRing) {
+      this.beaconRing.visible = false;
+    }
+    if (this.torchOfferGroup) {
+      this.torchOfferGroup.visible = false;
+    }
+    if (this.torchLightOffer) {
+      this.torchLightOffer.intensity = 0;
+    }
   }
 }
 
@@ -2582,21 +3266,67 @@ class ThirdPersonPlayerSystem {
   attemptLoadGLB() {
     if (typeof window === 'undefined' || !window.location) return;
     const loader = new GLTFLoader(globalLoadingManager);
+    
+    // Explicitly load texture if needed to ensure correct material binding
+    const texLoader = new THREE.TextureLoader(globalLoadingManager);
+    const colormapTex = texLoader.load('./assets/models/colormap.png');
+    colormapTex.colorSpace = THREE.SRGBColorSpace;
+    colormapTex.flipY = false;
+
     loader.load(
-      './assets/character.glb',
+      './assets/models/character.glb',
       (gltf) => {
         try {
           this.glbModel = gltf.scene;
-          this.glbModel.scale.set(1.0, 1.0, 1.0);
+          this.glbModel.scale.set(1.15, 1.15, 1.15); // Authentic human proportion
+          
           this.glbModel.traverse(c => {
             if (c.isMesh) {
               c.castShadow = true;
               c.receiveShadow = true;
+              if (c.material) {
+                // Ensure proper high-quality material rendering with texture
+                c.material.map = colormapTex;
+                c.material.roughness = 0.85;
+                c.material.metalness = 0.1;
+                c.material.needsUpdate = true;
+              }
             }
           });
+
           this.root.add(this.glbModel);
           this.procGroup.visible = false;
           this.hasGLB = true;
+          this.setFirstPerson(this.isFirstPerson);
+
+          // Attach third-person torch directly into the Right Hand of the character
+          this.glbTorch = new THREE.Group();
+          const glbStick = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.028, 0.55, 6), new THREE.MeshStandardMaterial({ color: 0x3d2817, roughness: 0.85 }));
+          glbStick.position.y = 0.15;
+          this.glbTorch.add(glbStick);
+          this.glbTorchFlame = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.14, 8), new THREE.MeshBasicMaterial({ color: 0xffa500 }));
+          this.glbTorchFlame.position.y = 0.44;
+          this.glbTorch.add(this.glbTorchFlame);
+
+          // Find arm-right node in Kenney character model hierarchy
+          let armRightNode = null;
+          this.glbModel.traverse(node => {
+            const n = (node.name || '').toLowerCase();
+            if (n === 'arm-right' || n.includes('arm_r') || n.includes('rightarm')) {
+              armRightNode = node;
+            }
+          });
+
+          if (armRightNode) {
+            // arm-right reaches down to x: -0.22, y: -0.05, z: 0 in local space
+            // Orient torch upright held firmly in the fist
+            this.glbTorch.position.set(-0.22, -0.02, 0.04);
+            this.glbTorch.rotation.set(0.2, 0, Math.PI / 2);
+            armRightNode.add(this.glbTorch);
+          } else {
+            this.glbTorch.position.set(0.18, 0.55, 0.15);
+            this.glbModel.add(this.glbTorch);
+          }
 
           if (gltf.animations && gltf.animations.length > 0) {
             this.mixer = new THREE.AnimationMixer(this.glbModel);
@@ -2604,8 +3334,13 @@ class ThirdPersonPlayerSystem {
               const name = clip.name.toLowerCase();
               this.animations[name] = this.mixer.clipAction(clip);
             });
-            const idle = this.animations['idle'] || Object.values(this.animations)[0];
-            if (idle) idle.play();
+            
+            // Set initial state
+            this.currentActionName = 'idle';
+            this.activeAction = this.animations['idle'] || Object.values(this.animations)[0];
+            if (this.activeAction) {
+              this.activeAction.play();
+            }
           }
         } catch (e) {
           console.warn('GLB character init error:', e);
@@ -2618,12 +3353,28 @@ class ThirdPersonPlayerSystem {
 
   setFirstPerson(isFp) {
     this.isFirstPerson = isFp;
-    if (this.hasGLB && this.glbModel) {
-      this.root.visible = !isFp;
-    } else {
-      this.root.visible = true;
-      if (this.head) this.head.visible = !isFp;
-      if (this.thirdPersonTorch) this.thirdPersonTorch.visible = !isFp;
+    // In first person, hide whole third person player model so body/arms/torso never block the camera view
+    this.root.visible = !isFp;
+  }
+
+  playAction(name, fadeDuration = 0.2) {
+    if (!this.animations || !this.animations[name]) return;
+    if (this.currentActionName === name) return;
+
+    const prevAction = this.activeAction;
+    const newAction = this.animations[name];
+
+    if (newAction) {
+      newAction.reset();
+      newAction.fadeIn(fadeDuration);
+      newAction.play();
+
+      if (prevAction && prevAction !== newAction) {
+        prevAction.fadeOut(fadeDuration);
+      }
+
+      this.activeAction = newAction;
+      this.currentActionName = name;
     }
   }
 
@@ -2633,6 +3384,12 @@ class ThirdPersonPlayerSystem {
     if (this.thirdPersonTorch) {
       this.thirdPersonTorch.visible = !this.isFirstPerson;
       this.tpTorchFlame.visible = isTorchLit;
+    }
+    if (this.glbTorch) {
+      this.glbTorch.visible = !this.isFirstPerson;
+      if (this.glbTorchFlame) {
+        this.glbTorchFlame.visible = isTorchLit;
+      }
     }
 
     if (moveDir && moveDir.lengthSq() > 0.05) {
@@ -2649,12 +3406,34 @@ class ThirdPersonPlayerSystem {
     }
     this.root.rotation.y = this.modelYaw;
 
+    const isMoving = speed > 0.4;
+
+    // GLB Skeletal Animation State Machine
     if (this.mixer) {
+      if (!isGrounded) {
+        // In air: jump / fall animation
+        if (this.animations['jump']) {
+          this.playAction('jump', 0.15);
+        } else if (this.animations['fall']) {
+          this.playAction('fall', 0.15);
+        }
+      } else if (isMoving) {
+        if (isSprinting && this.animations['sprint']) {
+          this.playAction('sprint', 0.2);
+        } else if (this.animations['walk']) {
+          this.playAction('walk', 0.2);
+        }
+      } else {
+        if (this.animations['idle']) {
+          this.playAction('idle', 0.25);
+        }
+      }
+
       this.mixer.update(delta);
       return;
     }
 
-    const isMoving = speed > 0.4;
+    // Procedural Fallback Animation
     const cycleFreq = isSprinting ? 12.5 : (isMoving ? 7.2 : 2.0);
     this.walkCycle += delta * cycleFreq;
 
@@ -2887,20 +3666,6 @@ class RealisticSUVSystem {
       this.carGroup.add(target);
       spot.target = target;
       this.headlights.push(spot);
-
-      const coneGeom = new THREE.ConeGeometry(1.6, 9.0, 12, 1, true);
-      const coneMat = new THREE.MeshBasicMaterial({
-        color: 0xfffae0,
-        opacity: 0.18,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        side: THREE.DoubleSide,
-        depthWrite: false
-      });
-      const cone = new THREE.Mesh(coneGeom, coneMat);
-      cone.position.set(hx, 0.85, -6.8);
-      cone.rotation.x = -Math.PI / 2;
-      this.carGroup.add(cone);
     });
 
     // 7. Interior Cabin: Dashboard, Steering Wheel, Speedo & Glowing Retro CB Radio!
@@ -3133,6 +3898,7 @@ class FrostboundGame {
 
     // Inventory
     this.inventory = [
+      { id: 'campfire_kit', name: 'Portable Camping Fire Kit', icon: '🏕️', count: 2 },
       { id: 'matches', name: 'Flint & Matches', icon: '🔥', count: 3 },
       { id: 'wood', name: 'Dry Pine Wood', icon: '🪵', count: 4 },
       { id: 'cloth', name: 'Cloth Scrap', icon: '🧣', count: 2 },
@@ -3149,40 +3915,40 @@ class FrostboundGame {
     // Linear Story & Mission System: 8 Sequential Missions with Physical Gates
     this.missions = [
       {
-        id: 'suv_loot',
+        id: 'elder_torch',
         chapter: 'CHAPTER 1',
-        title: 'The Avalanche Blockade',
-        zone: 'Zone 1: Crash Site',
-        coords: { x: -180, z: 518 },
-        icon: '🚗',
-        completed: false,
-        active: true,
-        desc: 'Loot vital survival supplies from the damaged SUV storage (Oil, Matches, Blanket, Food, Torch).'
-      },
-      {
-        id: 'first_night',
-        chapter: 'CHAPTER 2',
-        title: 'Survive First Night',
-        zone: 'Zone 1/2: Canyon Ridge',
-        coords: { x: -140, z: 460 },
+        title: "The Elder's Blessing",
+        zone: 'Zone 1: Solstice Village',
+        coords: { x: 158, z: 246 },
         icon: '🔥',
         completed: false,
-        active: false,
-        duskDeadline: 19.0, // 19:00 Dusk Deadline
-        desc: 'Sunset is falling fast. Gather dry pine wood and build a campfire before dark to prevent freezing.'
+        active: true,
+        desc: 'Speak with Village Elder Kaelen by the central bonfire and take the Sacred Torch of Solstice.'
       },
       {
         id: 'village_bridge',
-        chapter: 'CHAPTER 3',
-        title: 'The Abandoned Village',
-        zone: 'Zone 2: Pine Outpost',
+        chapter: 'CHAPTER 2',
+        title: 'The Gorge Drawbridge',
+        zone: 'Zone 1/2: Solstice Outpost',
         coords: { x: 165, z: 245 },
         icon: '🏚️',
         completed: false,
         active: false,
         progress: 0,
         total: 3,
-        desc: 'Search village cabins for 3 bridge repair items (Winch Gear, Steel Cable, Crank) and lower the drawbridge.'
+        desc: 'Scavenge 3 bridge parts (Winch Gear, Steel Cable, Crank) from village workshops and lower the drawbridge.'
+      },
+      {
+        id: 'first_night',
+        chapter: 'CHAPTER 3',
+        title: 'Survive First Night',
+        zone: 'Zone 2: Canyon Ridge',
+        coords: { x: -140, z: 460 },
+        icon: '⛺',
+        completed: false,
+        active: false,
+        duskDeadline: 19.0, // 19:00 Dusk Deadline
+        desc: 'The mountain pass is freezing over. Gather dry pine wood and build a campfire before dark to prevent freezing.'
       },
       {
         id: 'meadow_sustenance',
@@ -3246,25 +4012,20 @@ class FrostboundGame {
 
     // Gate Progression System: Unlocked sequentially through missions
     this.gates = {
-      suvBlockade: false,   // Unlocked by Mission 1 (Looting SUV)
-    };
-
-    // Last safe position for unstuck (U key)
-    this.lastSafePosition = new THREE.Vector3(-178, getTerrainHeight(-178, 517) + 0.5, 517);
-    this.lastSafePositionTimer = 0;
-
-    // Re-declare gates after inserting safe pos tracking
-    delete this.gates;
-    this.gates = {
-      suvBlockade: false,
-      firstNight: false,    // Unlocked by Mission 2 (Building Campfire)
-      villageBridge: false, // Unlocked by Mission 3 (Lowering Gorge Drawbridge)
-      meadowPass: false,    // Unlocked by Mission 5 (Meadow Fuel Found)
-      khaiSecurity: false,  // Unlocked by Mission 6 (Generator Powered)
-      ropeBridge: false,    // Unlocked by Mission 7 (Rope Bridge Crossed)
-      radioTower: false,    // Unlocked by Mission 8 (Antenna Calibrated)
+      elderTorch: false,    // Unlocked by Mission 1 (Speaking with Elder Kaelen)
+      villageBridge: false, // Unlocked by Mission 2 (Lowering Gorge Drawbridge)
+      suvBlockade: true,    // Unlocked by default in village start flow
+      firstNight: false,    // Unlocked by Mission 3 (Building Campfire)
+      meadowPass: false,    // Unlocked by Mission 4 (Meadow Fuel Found)
+      khaiSecurity: false,  // Unlocked by Mission 5 (Generator Powered)
+      ropeBridge: false,    // Unlocked by Mission 6 (Rope Bridge Crossed)
+      radioTower: false,    // Unlocked by Mission 7 (Antenna Calibrated)
       helicopterRescue: false // Unlocked by Mission 8 (Helicopter Touchdown)
     };
+
+    // Last safe position for unstuck (U key) inside Solstice Village Square
+    this.lastSafePosition = new THREE.Vector3(160.0, getTerrainHeight(160.0, 248.0) + 0.5, 248.0);
+    this.lastSafePositionTimer = 0;
 
     // Story Tracking State
     this.villagePartsCollected = 0;
@@ -3283,6 +4044,7 @@ class FrostboundGame {
     this.interactables = [];
     this.shadowWolves = [];
     this.campfires = [];
+    this.villageRelicVisuals = [];
 
     // Character Controller Physics & Locomotion
     this.verticalVelocity = 0;
@@ -3296,8 +4058,8 @@ class FrostboundGame {
     this.cameraPitch = 0;
     this.cameraYaw = -0.64; // Facing North-Northeast along the road towards Zone 2
 
-    // Camera Modes: First-Person (Default) & Third-Person (V key)
-    this.cameraMode = 'first'; // 'first' | 'third'
+    // Camera Modes: Third-Person (Default GTA-style over-the-shoulder view) & First-Person (V key toggle)
+    this.cameraMode = 'third'; // 'third' (Default) | 'first'
     this.thirdPersonCamPos = new THREE.Vector3();
     this.thirdPersonCamPosInitialized = false;
 
@@ -3308,8 +4070,9 @@ class FrostboundGame {
     this.isTrailerMode = false;
     this.trailerStartTime = 0;
     this.trailerDuration = 60.0;
-    this.lastBeaconAttempt = 0;
     this.hasShownLightHint = false;
+    this.isDrawbridgeCutscene = false;
+    this.drawbridgeCutsceneTime = 0;
 
     if (!this.headless) {
       this.initThree();
@@ -3334,33 +4097,35 @@ class FrostboundGame {
     this.scene.fog = new THREE.FogExp2(0x6e5262, 0.0033);
 
     this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1400);
-    const spawnX = -178.0;
-    const spawnZ = 517.0;
+    const spawnX = 160.0;
+    const spawnZ = 248.0;
     const spawnY = getTerrainHeight(spawnX, spawnZ);
     this.camera.position.set(spawnX, spawnY + 2.1, spawnZ);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Limit pixel ratio to 1.25 for buttery-smooth 60 FPS on high-res displays
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Ultra-crisp, beautiful soft shadows
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.25;
+    this.renderer.toneMappingExposure = 0.92;
     this.container.appendChild(this.renderer.domElement);
 
-    // Three.js Postprocessing: EffectComposer, RenderPass, UnrealBloomPass, CinematicPostShader, OutputPass
-    this.usePostProcessing = true;
+    // Three.js Postprocessing: EffectComposer, RenderPass, CinematicPostShader, OutputPass
+    this.usePostProcessing = false; // Direct renderer rendering for maximum performance and 0 input lag
     this.composer = new EffectComposer(this.renderer);
     const renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(renderPass);
 
-    // Subtle bloom: glowing sun, campfires, beacons without washing out ground
+    // Zero out UnrealBloomPass so bright light doesn't bleed all over the screen
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.38, // strength
-      0.45, // radius
-      0.82  // threshold
+      0.0, // strength 0 completely kills the blinding white wash
+      0.2, // radius
+      1.0  // threshold
     );
+    this.bloomPass.enabled = false;
     this.composer.addPass(this.bloomPass);
 
     this.cinematicPass = new ShaderPass(CinematicPostShader);
@@ -3371,54 +4136,96 @@ class FrostboundGame {
 
     this.initHDRI();
 
-    // Sky Dome enclosing 1200m world with warm sunset gradient
+    // Dynamic Minecraft/AAA Sky Dome enclosing world
     const skyGeom = new THREE.SphereGeometry(1100, 32, 16);
-    const skyMat = new THREE.MeshBasicMaterial({ color: 0x7c5a6d, side: THREE.BackSide });
+    const skyMat = new THREE.MeshBasicMaterial({ color: 0x5b7086, side: THREE.BackSide });
     this.skyMesh = new THREE.Mesh(skyGeom, skyMat);
     this.scene.add(this.skyMesh);
 
-    // God-Rays-Like Warm Sun with multi-layered glowing corona
-    this.sunGroup = new THREE.Group();
+    // Dynamic Starfield for Crisp Night Sky (1200 glowing alpine stars)
+    const starCount = 1200;
+    const starGeom = new THREE.BufferGeometry();
+    const starPositions = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(Math.random() * 0.95); // Upper hemisphere only
+      const r = 1050;
+      starPositions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      starPositions[i * 3 + 1] = r * Math.cos(phi);
+      starPositions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+    }
+    starGeom.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+    this.starMat = new THREE.PointsMaterial({
+      color: 0xffffff,
+      size: 2.2,
+      transparent: true,
+      opacity: 0.0, // Blends smoothly at night
+      depthWrite: false
+    });
+    this.starPoints = new THREE.Points(starGeom, this.starMat);
+    this.scene.add(this.starPoints);
 
+    // Visible Glowing Sun & Moon Orbs
+    this.sunGroup = new THREE.Group();
+    // Radiant Sun Orb (Blazing golden corona)
     const sunGeom = new THREE.SphereGeometry(22, 16, 16);
     const sunMat = new THREE.MeshBasicMaterial({ color: 0xfffaea });
     this.sunOrb = new THREE.Mesh(sunGeom, sunMat);
     this.sunGroup.add(this.sunOrb);
 
-    // Realistic god-rays radial corona billboard
-    const coronaTexture = createSunCoronaTexture();
-    const coronaGeom = new THREE.PlaneGeometry(360, 360);
-    const coronaMat = new THREE.MeshBasicMaterial({
-      map: coronaTexture,
+    // Outer warm sun glow aura
+    const sunGlowGeom = new THREE.SphereGeometry(32, 16, 16);
+    const sunGlowMat = new THREE.MeshBasicMaterial({
+      color: 0xff9922,
       transparent: true,
+      opacity: 0.35,
       blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide
+      depthWrite: false
     });
-    this.sunCoronaSprite = new THREE.Mesh(coronaGeom, coronaMat);
-    this.sunGroup.add(this.sunCoronaSprite);
-
+    this.sunGlow = new THREE.Mesh(sunGlowGeom, sunGlowMat);
+    this.sunGroup.add(this.sunGlow);
     this.scene.add(this.sunGroup);
 
-    // Warm Sunset Ambient, Hemisphere & Directional Sun Light
-    this.hemiLight = new THREE.HemisphereLight(0x8a7082, 0x483a30, 0.85);
+    // Luminescent Moon Orb (Appears on opposite side of sun)
+    this.moonGroup = new THREE.Group();
+    const moonGeom = new THREE.SphereGeometry(16, 16, 16);
+    const moonMat = new THREE.MeshBasicMaterial({ color: 0xe2f1ff });
+    this.moonOrb = new THREE.Mesh(moonGeom, moonMat);
+    this.moonGroup.add(this.moonOrb);
+
+    const moonGlowGeom = new THREE.SphereGeometry(24, 16, 16);
+    const moonGlowMat = new THREE.MeshBasicMaterial({
+      color: 0x93c5fd,
+      transparent: true,
+      opacity: 0.25,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    this.moonGlow = new THREE.Mesh(moonGlowGeom, moonGlowMat);
+    this.moonGroup.add(this.moonGlow);
+    this.scene.add(this.moonGroup);
+
+
+    // Balanced Alpine Daylight Lighting
+    this.hemiLight = new THREE.HemisphereLight(0x94a3b8, 0x475569, 0.65);
     this.scene.add(this.hemiLight);
 
-    this.ambientLight = new THREE.AmbientLight(0x6e5e74, 0.75);
+    this.ambientLight = new THREE.AmbientLight(0x64748b, 0.55);
     this.scene.add(this.ambientLight);
 
-    // Single large high-resolution shadow map following the player
-    this.sunLight = new THREE.DirectionalLight(0xffa153, 1.85);
+    // Cinematic high-resolution shadow map (2048x2048 with expansive frustum for cinematic drone & terrain)
+    this.sunLight = new THREE.DirectionalLight(0xffa153, 1.45);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.width = 2048;
     this.sunLight.shadow.mapSize.height = 2048;
-    this.sunLight.shadow.camera.near = 10;
-    this.sunLight.shadow.camera.far = 450;
-    this.sunLight.shadow.camera.left = -95;
-    this.sunLight.shadow.camera.right = 95;
-    this.sunLight.shadow.camera.top = 95;
-    this.sunLight.shadow.camera.bottom = -95;
-    this.sunLight.shadow.bias = -0.0006;
+    this.sunLight.shadow.camera.near = 5;
+    this.sunLight.shadow.camera.far = 600;
+    this.sunLight.shadow.camera.left = -160;
+    this.sunLight.shadow.camera.right = 160;
+    this.sunLight.shadow.camera.top = 160;
+    this.sunLight.shadow.camera.bottom = -160;
+    this.sunLight.shadow.bias = -0.0004;
+    this.sunLight.shadow.normalBias = 0.02;
     this.scene.add(this.sunLight);
 
     // Player Object & Torch (Grounded near Wrecked Truck in Zone 1)
@@ -3435,6 +4242,13 @@ class FrostboundGame {
     this.torchLight = this.fpArms.handTorchLight;
     this.flameMesh = this.fpArms.flameMesh;
 
+    // Omnidirectional Player Torch Light (Attached directly to Player group in world space)
+    // Guarantees rich, bright illumination of the ground, character, and surroundings in both 1st and 3rd person!
+    this.worldTorchLight = new THREE.PointLight(0xff9e44, 4.8, 36, 1.3);
+    this.worldTorchLight.position.set(0.35, 1.4, 0.25);
+    this.worldTorchLight.castShadow = false;
+    this.player.add(this.worldTorchLight);
+
     // Third-Person Animated Player Model
     this.thirdPersonPlayer = new ThirdPersonPlayerSystem(this.scene);
     this.thirdPersonPlayer.setFirstPerson(this.cameraMode === 'first');
@@ -3447,10 +4261,10 @@ class FrostboundGame {
     // 3D Search & Rescue Helicopter for Chapter 6 Ending Cutscene
     this.rescueHelicopter = new RescueHelicopter(this.scene);
 
-    // Ember Clock Light Radius Ring for Torch (14m radius)
-    this.torchLightRing = this.createLightRing(14.0, 0xffaa44, 0.28);
-    this.torchLightRing.visible = false;
-    this.scene.add(this.torchLightRing);
+    // Solstice Village Elder Kaelen (NPC Guide)
+    this.elderKaelen = new ElderKaelenNPC(this.scene, 158.0, 246.0);
+    this.isVillageIntro = false;
+    this.villageIntroTime = 0;
   }
 
   createLightRing(radius, color = 0xff8833, opacity = 0.3) {
@@ -3469,75 +4283,124 @@ class FrostboundGame {
   }
 
   initHDRI() {
-    this.rgbeLoader = new RGBELoader(globalLoadingManager);
-    this.pmremGenerator = new THREE.PMREMGenerator(this.renderer);
-    this.pmremGenerator.compileEquirectangularShader();
+    // Pure procedural atmospheric dome & starry night (Zero 32-bit floating-point HDR memory overhead, no urban textures)
+    this.createAtmosphericSky();
+  }
 
-    this.rgbeLoader.load(
-      './assets/hdri/sky_day.hdr',
-      (texture) => {
-        this.dayHdrTexture = texture;
-        this.dayEnvMap = this.pmremGenerator.fromEquirectangular(texture).texture;
-        this.updateSkyByTimeOfDay();
-      },
-      undefined,
-      (err) => console.warn('Day HDRI load error:', err)
-    );
+  createAtmosphericSky() {
+    // 1. Procedural Starfield for Alpine Night Sky
+    const starCount = 650;
+    const starGeom = new THREE.BufferGeometry();
+    const starPositions = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const u = Math.random();
+      const v = Math.random();
+      const theta = u * 2.0 * Math.PI;
+      const phi = Math.acos(2.0 * v - 1.0);
+      const r = 1050; // Inside 1100m sky dome
+      // Concentrate in upper hemisphere
+      starPositions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      starPositions[i * 3 + 1] = Math.abs(r * Math.cos(phi)) + 15; // Above horizon
+      starPositions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+    }
+    starGeom.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+    this.starMaterial = new THREE.PointsMaterial({
+      color: 0xffffff,
+      size: 2.2,
+      transparent: true,
+      opacity: 0.0, // Fade in at dusk/night
+      depthWrite: false
+    });
+    this.starPoints = new THREE.Points(starGeom, this.starMaterial);
+    this.scene.add(this.starPoints);
 
-    this.rgbeLoader.load(
-      './assets/hdri/sky_night.hdr',
-      (texture) => {
-        this.nightHdrTexture = texture;
-        this.nightEnvMap = this.pmremGenerator.fromEquirectangular(texture).texture;
-        this.updateSkyByTimeOfDay();
-      },
-      undefined,
-      (err) => console.warn('Night HDRI load error:', err)
-    );
+    // Initial daytime sky color
+    this.updateSkyByTimeOfDay();
   }
 
   updateSkyByTimeOfDay() {
-    const isNight = this.timeOfDay < 6.0 || this.timeOfDay > 18.0;
+    // Smooth day/dusk/night transition based on this.timeOfDay (0.0 to 24.0)
+    const isNight = this.timeOfDay < 5.5 || this.timeOfDay > 19.5;
+    const isDusk = (this.timeOfDay >= 17.5 && this.timeOfDay <= 19.5) || (this.timeOfDay >= 4.5 && this.timeOfDay <= 5.5);
+
+    // Remove any external texture pollution
+    this.scene.background = null;
+    this.scene.environment = null;
+
     if (isNight) {
-      if (this.nightEnvMap) this.scene.environment = this.nightEnvMap;
-      if (this.nightHdrTexture) {
-        this.scene.background = this.nightHdrTexture;
-        if (this.skyMesh) this.skyMesh.visible = false;
+      // Midnight Wilderness: Deep alpine navy blue (0x070b14)
+      const nightSkyColor = new THREE.Color(0x070b14);
+      if (this.skyMesh && this.skyMesh.material) {
+        this.skyMesh.visible = true;
+        this.skyMesh.material.color.copy(nightSkyColor);
       }
-      // Night blue moonlight
+      this.scene.fog.color.setHex(0x070b14);
+      this.scene.fog.density = 0.0035;
+
+      // Twinkling wilderness stars
+      if (this.starMaterial) this.starMaterial.opacity = 0.85;
+
+      // Realistic cold mountain moonlight
       if (this.sunLight) {
-        this.sunLight.color.setHex(0x5a7ca8);
-        this.sunLight.intensity = 0.65;
+        this.sunLight.color.setHex(0x38bdf8);
+        this.sunLight.intensity = 0.22;
       }
       if (this.ambientLight) {
-        this.ambientLight.color.setHex(0x1a2638);
+        this.ambientLight.color.setHex(0x0f172a);
+        this.ambientLight.intensity = 0.25;
+      }
+      if (this.hemiLight) {
+        this.hemiLight.color.setHex(0x1e293b);
+        this.hemiLight.groundColor.setHex(0x020617);
+      }
+    } else if (isDusk) {
+      // Golden Alpine Dusk: Sunset Ember (0x7c4d5c)
+      const duskColor = new THREE.Color(0x6e4e5e);
+      if (this.skyMesh && this.skyMesh.material) {
+        this.skyMesh.visible = true;
+        this.skyMesh.material.color.copy(duskColor);
+      }
+      this.scene.fog.color.setHex(0x6e4e5e);
+      this.scene.fog.density = 0.0030;
+
+      if (this.starMaterial) this.starMaterial.opacity = 0.3;
+
+      if (this.sunLight) {
+        this.sunLight.color.setHex(0xf59e0b);
+        this.sunLight.intensity = 0.95;
+      }
+      if (this.ambientLight) {
+        this.ambientLight.color.setHex(0x6b4c5a);
         this.ambientLight.intensity = 0.45;
       }
       if (this.hemiLight) {
-        this.hemiLight.color.setHex(0x2a3852);
-        this.hemiLight.groundColor.setHex(0x0a121e);
+        this.hemiLight.color.setHex(0xd97706);
+        this.hemiLight.groundColor.setHex(0x33202a);
       }
-      if (this.bloomPass) this.bloomPass.strength = 0.60;
     } else {
-      if (this.dayEnvMap) this.scene.environment = this.dayEnvMap;
-      if (this.dayHdrTexture) {
-        this.scene.background = this.dayHdrTexture;
-        if (this.skyMesh) this.skyMesh.visible = false;
+      // Crisp Alpine Daylight (0x5b7086)
+      const daySkyColor = new THREE.Color(0x5b7086);
+      if (this.skyMesh && this.skyMesh.material) {
+        this.skyMesh.visible = true;
+        this.skyMesh.material.color.copy(daySkyColor);
       }
-      // Day warm golden-hour / sunlight
+      this.scene.fog.color.setHex(0x5b7086);
+      this.scene.fog.density = 0.0028;
+
+      if (this.starMaterial) this.starMaterial.opacity = 0.0;
+
       if (this.sunLight) {
-        this.sunLight.color.setHex(0xffa153);
-        this.sunLight.intensity = 1.85;
+        this.sunLight.color.setHex(0xffecc7);
+        this.sunLight.intensity = 1.15;
       }
       if (this.ambientLight) {
-        this.ambientLight.color.setHex(0x6e5e74);
-        this.ambientLight.intensity = 0.75;
+        this.ambientLight.color.setHex(0x6e8299);
+        this.ambientLight.intensity = 0.60;
       }
       if (this.hemiLight) {
-        this.hemiLight.color.setHex(0x8a7082);
-        this.hemiLight.groundColor.setHex(0x483a30);
+        this.hemiLight.color.setHex(0x93a5b8);
+        this.hemiLight.groundColor.setHex(0x454b52);
       }
-      if (this.bloomPass) this.bloomPass.strength = 0.38;
     }
   }
 
@@ -3553,33 +4416,33 @@ class FrostboundGame {
   }
 
   createSnowParticles() {
-    // Light falling snow (not blizzard) with subtle flurries
-    const snowCount = 1400;
+    // Dynamic mountain snowfall: lighter, soft flurries covering full view 360 degrees
+    const snowCount = 900;
     const geom = new THREE.BufferGeometry();
     const positions = new Float32Array(snowCount * 3);
     const velocities = new Float32Array(snowCount * 3);
 
-    const px = this.player ? this.player.position.x : -178;
-    const py = this.player ? this.player.position.y : 0;
-    const pz = this.player ? this.player.position.z : 517;
+    const px = this.player ? this.player.position.x : 160;
+    const py = this.player ? this.player.position.y : 10;
+    const pz = this.player ? this.player.position.z : 248;
 
     for (let i = 0; i < snowCount; i++) {
-      positions[i * 3] = px + (Math.random() - 0.5) * 64;
-      positions[i * 3 + 1] = py + Math.random() * 26 - 4;
-      positions[i * 3 + 2] = pz + (Math.random() - 0.5) * 64;
+      positions[i * 3] = px + (Math.random() - 0.5) * 80;
+      positions[i * 3 + 1] = py + Math.random() * 26 - 3;
+      positions[i * 3 + 2] = pz + (Math.random() - 0.5) * 80;
 
-      velocities[i * 3] = (Math.random() - 0.5) * 0.12;
-      velocities[i * 3 + 1] = -1.1 - Math.random() * 0.6; // Light gentle fall (~1.1 to 1.7 m/s)
-      velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.12;
+      velocities[i * 3] = (Math.random() - 0.5) * 0.15;
+      velocities[i * 3 + 1] = -0.9 - Math.random() * 0.55; // Gentle, natural flutter (~0.9 to 1.45 m/s)
+      velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.15;
     }
 
     geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     const mat = new THREE.PointsMaterial({
       map: createSnowTexture(),
       color: 0xffffff,
-      size: 0.35,
+      size: 0.28,
       transparent: true,
-      opacity: 0.75,
+      opacity: 0.68,
       depthWrite: false
     });
 
@@ -3589,9 +4452,9 @@ class FrostboundGame {
   }
 
   buildWorld() {
-    // 1. Procedural 1200x1200m Alpine World with Vertex Colors & CC0 Texture Splatting
-    const terrainSize = 1200;
-    const segments = 256;
+    // 1. Procedural 1600x1600m Vast Alpine World with Vertex Colors & CC0 Texture Splatting
+    const terrainSize = 1600;
+    const segments = 320;
     const terrainGeom = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
     terrainGeom.rotateX(-Math.PI / 2);
 
@@ -3689,11 +4552,12 @@ class FrostboundGame {
     this.buildRiverWaterWheel();
     this.buildRidgeWindTurbine();
 
-    // 19. Living Wildlife: Deer Herd, Rabbit Colony, Bird Flocks, Fish School
+    // 19. Living Wildlife: Deer Herd, Rabbit Colony, Bird Flocks, Fish School, Horse Herd
     this.deerHerd = new DeerHerd(this.scene);
     this.rabbitColony = new RabbitColony(this.scene);
     this.birdFlocks = new BirdFlocks(this.scene);
     this.fishSchool = new FishSchool(this.scene);
+    this.horseHerd = new HorseHerd(this.scene);
   }
 
   rebuildTerrainMesh() {
@@ -3713,6 +4577,48 @@ class FrostboundGame {
     pos.needsUpdate = true;
     if (colors) colors.needsUpdate = true;
     this.terrain.geometry.computeVertexNormals();
+
+    // Re-snap village pavers to new terrain heights if heightmap finished loading
+    if (this.villagePaverInst && this.villagePaverTransforms) {
+      const dummy = new THREE.Object3D();
+      this.villagePaverTransforms.forEach((t, idx) => {
+        const py = getTerrainHeight(t.x, t.z) + 0.04;
+        const hF = getTerrainHeight(t.x, t.z + 0.5);
+        const hB = getTerrainHeight(t.x, t.z - 0.5);
+        const hR = getTerrainHeight(t.x + 0.5, t.z);
+        const hL = getTerrainHeight(t.x - 0.5, t.z);
+        const rotX = Math.atan2(hB - hF, 1.0) * 0.75;
+        const rotZ = Math.atan2(hL - hR, 1.0) * 0.75;
+        dummy.position.set(t.x, py, t.z);
+        dummy.rotation.set(rotX, t.rotY, rotZ);
+        dummy.scale.set(t.scaleX || 1.0, 1.0, t.scaleZ || 1.0);
+        dummy.updateMatrix();
+        this.villagePaverInst.setMatrixAt(idx, dummy.matrix);
+      });
+      this.villagePaverInst.instanceMatrix.needsUpdate = true;
+    }
+
+    // Re-snap ALL trees and vegetation instances firmly to terrain so no tree ever floats
+    if (this.treeTransforms && this.treeTransforms.length > 0) {
+      const dummy = new THREE.Object3D();
+      for (const item of this.treeTransforms) {
+        const ty = getTerrainHeight(item.x, item.z) - (item.sinkY || 0.22);
+        dummy.position.set(item.x, ty, item.z);
+        dummy.scale.copy(item.scale);
+        dummy.rotation.copy(item.rotation);
+        dummy.updateMatrix();
+
+        if (Array.isArray(item.inst)) {
+          for (const instMesh of item.inst) {
+            instMesh.setMatrixAt(item.idx, dummy.matrix);
+            instMesh.instanceMatrix.needsUpdate = true;
+          }
+        } else {
+          item.inst.setMatrixAt(item.idx, dummy.matrix);
+          item.inst.instanceMatrix.needsUpdate = true;
+        }
+      }
+    }
   }
 
   getTerrainHeight(x, z) {
@@ -3734,55 +4640,100 @@ class FrostboundGame {
       metalness: 0.08
     });
 
-    const peakAngles = [0, 0.35, 0.7, 1.05, 1.4, 1.75, 2.1, 2.45, 2.8, 3.15, 3.5, 3.85, 4.2, 4.55, 4.9, 5.25, 5.6, 5.95];
+    const peakAngles = [
+      0, 0.28, 0.55, 0.82, 1.1, 1.38, 1.65, 1.92, 2.2, 2.48, 2.75, 3.02, 
+      3.3, 3.58, 3.85, 4.12, 4.4, 4.68, 4.95, 5.22, 5.5, 5.78, 6.05
+    ];
     peakAngles.forEach((angle, i) => {
-      const radius = 560 + (i % 3) * 45;
+      const radius = 680 + (i % 4) * 45;
       const px = Math.cos(angle) * radius;
       const pz = Math.sin(angle) * radius;
-      const height = 150 + (i % 4) * 45;
-      const width = 130 + (i % 3) * 40;
+      const height = 180 + (i % 4) * 55;
+      const width = 160 + (i % 3) * 50;
 
-      const peakGeom = new THREE.ConeGeometry(width, height, 5);
+      const peakGeom = new THREE.ConeGeometry(width, height, 6);
       const peakMesh = new THREE.Mesh(peakGeom, peakMat);
-      peakMesh.position.set(px, height / 2 - 10, pz);
+      peakMesh.position.set(px, height / 2 - 15, pz);
       peakMesh.rotation.y = angle * 1.5;
+      peakMesh.castShadow = true;
+      peakMesh.receiveShadow = true;
       this.scene.add(peakMesh);
     });
   }
 
   // ---------------------------------------------------------------------------
-  // ZONE 3: ANIMATED WATER LAKE & RIVER, FROZEN EDGE RIM & GLACIAL SPIRE
+  // ZONE 3: FROZEN GLACIAL LAKE (~80M OVAL), ANIMATED ICE SHADER, RIVER & REEDS
   // ---------------------------------------------------------------------------
   buildFrozenLake() {
     const lakeX = -35.0;
     const lakeZ = 40.0;
-    const lakeRadius = 65.0;
+    const lakeRadiusX = 82.0;
+    const lakeRadiusZ = 68.0;
     const lakeY = 5.2;
 
     this.waterMat = createWaterMaterial();
+    this.iceLakeMat = createIceLakeMaterial();
 
-    // 1. Semi-Transparent Animated Shader Water Lake Surface
-    const lakeGeom = new THREE.CircleGeometry(lakeRadius - 3.5, 48);
-    lakeGeom.rotateX(-Math.PI / 2);
-    const lakeMesh = new THREE.Mesh(lakeGeom, this.waterMat);
-    lakeMesh.position.set(lakeX, lakeY, lakeZ);
+    // 1. Shimmering Frozen Lake Ice Surface (~80m radius oval)
+    const ovalGeom = new THREE.CircleGeometry(1.0, 56);
+    ovalGeom.rotateX(-Math.PI / 2);
+    ovalGeom.scale(lakeRadiusX, 1.0, lakeRadiusZ);
+    const lakeMesh = new THREE.Mesh(ovalGeom, this.iceLakeMat);
+    lakeMesh.position.set(lakeX, lakeY + 0.04, lakeZ);
     lakeMesh.receiveShadow = true;
     this.scene.add(lakeMesh);
 
-    // 2. Frozen Edge Ice Rim around lake perimeter
-    const iceEdgeGeom = new THREE.RingGeometry(lakeRadius - 5.5, lakeRadius + 2.5, 48);
-    iceEdgeGeom.rotateX(-Math.PI / 2);
+    // Subtle water layer underneath ice for transparent depth
+    const underWaterGeom = new THREE.CircleGeometry(1.0, 48);
+    underWaterGeom.rotateX(-Math.PI / 2);
+    underWaterGeom.scale(lakeRadiusX - 2.5, 1.0, lakeRadiusZ - 2.5);
+    const underWaterMesh = new THREE.Mesh(underWaterGeom, this.waterMat);
+    underWaterMesh.position.set(lakeX, lakeY - 0.05, lakeZ);
+    this.scene.add(underWaterMesh);
+
+    // 2. Frozen Shoreline Snow & Ice Rim around oval perimeter
+    const rimCount = 56;
+    const rimGeom = new THREE.RingGeometry(0.92, 1.06, rimCount);
+    rimGeom.rotateX(-Math.PI / 2);
+    rimGeom.scale(lakeRadiusX, 1.0, lakeRadiusZ);
     const iceEdgeMat = new THREE.MeshStandardMaterial({
       color: 0xebf8ff,
-      roughness: 0.62,
-      metalness: 0.28,
+      roughness: 0.65,
+      metalness: 0.25,
       transparent: true,
-      opacity: 0.94,
+      opacity: 0.95,
       side: THREE.DoubleSide
     });
-    const iceRimMesh = new THREE.Mesh(iceEdgeGeom, iceEdgeMat);
-    iceRimMesh.position.set(lakeX, lakeY + 0.03, lakeZ);
+    const iceRimMesh = new THREE.Mesh(rimGeom, iceEdgeMat);
+    iceRimMesh.position.set(lakeX, lakeY + 0.06, lakeZ);
     this.scene.add(iceRimMesh);
+
+    // Shoreline Reeds & Snow mounds along the lake perimeter
+    const reedMat = new THREE.MeshStandardMaterial({ color: 0x786040, roughness: 0.9 });
+    const snowMoundMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.8 });
+    for (let i = 0; i < 40; i++) {
+      const angle = (i / 40) * Math.PI * 2;
+      const rx = lakeX + Math.cos(angle) * (lakeRadiusX + (Math.random() - 0.5) * 4);
+      const rz = lakeZ + Math.sin(angle) * (lakeRadiusZ + (Math.random() - 0.5) * 4);
+      const ry = getTerrainHeight(rx, rz);
+
+      // Clump of 3-5 frozen shoreline reeds
+      if (i % 2 === 0) {
+        for (let k = 0; k < 4; k++) {
+          const reed = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.05, 1.4 + Math.random() * 0.8, 4), reedMat);
+          reed.position.set(rx + (Math.random() - 0.5) * 0.8, ry + 0.7, rz + (Math.random() - 0.5) * 0.8);
+          reed.rotation.z = (Math.random() - 0.5) * 0.25;
+          reed.castShadow = true;
+          this.scene.add(reed);
+        }
+      } else {
+        // Shoreline snow crust mound
+        const mound = new THREE.Mesh(new THREE.SphereGeometry(1.2 + Math.random() * 0.8, 6, 5), snowMoundMat);
+        mound.scale.set(1.4, 0.35, 1.4);
+        mound.position.set(rx, ry + 0.15, rz);
+        this.scene.add(mound);
+      }
+    }
 
     // 3. Flowing River Water Ribbon connecting through the gorge into the lake
     const riverWaypoints = [
@@ -3994,14 +4945,47 @@ class FrostboundGame {
   }
 
   buildRoadMesh() {
-    const numSteps = 400;
-    const roadWidth = 4.4;
+    const numSteps = 450;
+    const roadWidth = 5.0; // 5m width per spec
+    const shoulderWidth = 0.3; // 0.3m gravel shoulder each side
+    const totalHalfW = (roadWidth / 2) + shoulderWidth;
+    const roadHalfW = roadWidth / 2;
 
     const roadGeom = new THREE.BufferGeometry();
     const positions = [];
+    const colors = [];
     const uvs = [];
 
-    for (let i = 0; i <= numSteps; i++) {
+    // Quad strips across cross-section: Left Shoulder Outer -> Left Shoulder Inner -> Right Shoulder Inner -> Right Shoulder Outer
+    // 4 vertices per cross-section slice:
+    // v0: Left Shoulder Outer (-totalHalfW)
+    // v1: Left Shoulder Inner (-roadHalfW)
+    // v2: Right Shoulder Inner (+roadHalfW)
+    // v3: Right Shoulder Outer (+totalHalfW)
+    // Prepend 10 lead-in slices from z = 556 down to z = 520 along x = -180
+    const leadInCount = 10;
+    for (let k = 0; k <= leadInCount; k++) {
+      const lz = 556.0 - (k / leadInCount) * 36.0; // 556 down to 520
+      const lx = -180.0;
+      const ly = getTerrainHeight(lx, lz) + 0.04; // Sits exactly on road height 0.04m
+      const normX = 1.0;
+      const normZ = 0.0;
+      const offsets = [-totalHalfW, -roadHalfW, roadHalfW, totalHalfW];
+      const sliceColors = [
+        [0.72, 0.68, 0.62],
+        [0.48, 0.42, 0.36],
+        [0.48, 0.42, 0.36],
+        [0.72, 0.68, 0.62]
+      ];
+      const sliceUvs = [0.0, 0.15, 0.85, 1.0];
+      offsets.forEach((off, vIdx) => {
+        positions.push(lx + normX * off, ly, lz + normZ * off);
+        colors.push(...sliceColors[vIdx]);
+        uvs.push(sliceUvs[vIdx], (k / leadInCount) * 5.0);
+      });
+    }
+
+    for (let i = 1; i <= numSteps; i++) {
       const t = i / numSteps;
       const p = RoadCurve.getPoint(t);
       const tangent = RoadCurve.getTangent(t).normalize();
@@ -4011,32 +4995,48 @@ class FrostboundGame {
       const normX = nx / len;
       const normZ = nz / len;
 
-      const halfW = roadWidth / 2;
-      const leftX = p.x + normX * halfW;
-      const leftZ = p.z + normZ * halfW;
-      const rightX = p.x - normX * halfW;
-      const rightZ = p.z - normZ * halfW;
+      const offsets = [-totalHalfW, -roadHalfW, roadHalfW, totalHalfW];
+      const sliceColors = [
+        [0.72, 0.68, 0.62], // v0: light gravel shoulder
+        [0.48, 0.42, 0.36], // v1: main road dirt edge
+        [0.48, 0.42, 0.36], // v2: main road dirt edge
+        [0.72, 0.68, 0.62]  // v3: light gravel shoulder
+      ];
+      const sliceUvs = [0.0, 0.15, 0.85, 1.0];
 
-      const leftY = getTerrainHeight(leftX, leftZ) + 0.05;
-      const rightY = getTerrainHeight(rightX, rightZ) + 0.05;
+      offsets.forEach((off, vIdx) => {
+        const vx = p.x + normX * off;
+        const vz = p.z + normZ * off;
+        // Vertex sits exactly ON getTerrainHeight at every vertex with minimal 0.04m offset
+        const vy = getTerrainHeight(vx, vz) + 0.04;
 
-      positions.push(leftX, leftY, leftZ);
-      positions.push(rightX, rightY, rightZ);
-
-      uvs.push(0, t * 50, 1, t * 50);
+        positions.push(vx, vy, vz);
+        colors.push(...sliceColors[vIdx]);
+        uvs.push(sliceUvs[vIdx], 5.0 + t * 65);
+      });
     }
 
+    const totalSlices = leadInCount + 1 + numSteps;
     const indices = [];
-    for (let i = 0; i < numSteps; i++) {
-      const a = i * 2;
-      const b = i * 2 + 1;
-      const c = (i + 1) * 2;
-      const d = (i + 1) * 2 + 1;
-      indices.push(a, b, c);
-      indices.push(b, d, c);
+    for (let i = 0; i < totalSlices - 1; i++) {
+      const base = i * 4;
+      const next = (i + 1) * 4;
+
+      // Strip 1: Left shoulder (v0 -> v1)
+      indices.push(base, next, base + 1);
+      indices.push(next, next + 1, base + 1);
+
+      // Strip 2: Main road pavement (v1 -> v2)
+      indices.push(base + 1, next + 1, base + 2);
+      indices.push(next + 1, next + 2, base + 2);
+
+      // Strip 3: Right shoulder (v2 -> v3)
+      indices.push(base + 2, next + 2, base + 3);
+      indices.push(next + 2, next + 3, base + 3);
     }
 
     roadGeom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    roadGeom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     roadGeom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     roadGeom.setIndex(indices);
     roadGeom.computeVertexNormals();
@@ -4045,19 +5045,20 @@ class FrostboundGame {
     const dirtDiff = texLoader.load('./assets/textures/dirt_diff.jpg');
     dirtDiff.wrapS = THREE.RepeatWrapping;
     dirtDiff.wrapT = THREE.RepeatWrapping;
-    dirtDiff.repeat.set(2, 60);
+    dirtDiff.repeat.set(2, 65);
     dirtDiff.colorSpace = THREE.SRGBColorSpace;
 
     const dirtNor = texLoader.load('./assets/textures/dirt_nor.jpg');
     dirtNor.wrapS = THREE.RepeatWrapping;
     dirtNor.wrapT = THREE.RepeatWrapping;
-    dirtNor.repeat.set(2, 60);
+    dirtNor.repeat.set(2, 65);
 
     const roadMat = new THREE.MeshStandardMaterial({
       map: dirtDiff,
       normalMap: dirtNor,
       normalScale: new THREE.Vector2(0.85, 0.85),
-      roughness: 0.92,
+      vertexColors: true,
+      roughness: 0.90,
       metalness: 0.04
     });
 
@@ -4067,14 +5068,16 @@ class FrostboundGame {
         `
         #include <color_fragment>
         #if defined( USE_MAP )
-        // Dual tire tracks at u ~ 0.28 and u ~ 0.72
-        float distTrack1 = abs(vMapUv.x - 0.28);
-        float distTrack2 = abs(vMapUv.x - 0.72);
+        // Dual tire tracks worn into dirt/snow at u ~ 0.36 and u ~ 0.64
+        float distTrack1 = abs(vMapUv.x - 0.36);
+        float distTrack2 = abs(vMapUv.x - 0.64);
         float track1 = 1.0 - smoothstep(0.04, 0.12, distTrack1);
         float track2 = 1.0 - smoothstep(0.04, 0.12, distTrack2);
         float trackMud = max(track1, track2);
-        // Darken compressed wet tire treads in dirt/gravel
-        diffuseColor.rgb *= (1.0 - trackMud * 0.38);
+
+        // Darken compressed wet tire ruts and blend with vertex colors
+        diffuseColor.rgb *= (1.0 - trackMud * 0.35);
+        diffuseColor.rgb *= (vColor.rgb * 1.35);
         #endif
         `
       );
@@ -4084,44 +5087,92 @@ class FrostboundGame {
     roadMesh.receiveShadow = true;
     this.scene.add(roadMesh);
 
-    // Road Guide Marker Posts on the gentle ledge (RIGHT side before the drop)
-    for (let i = 4; i < numSteps - 4; i += 10) {
+    // 4. Crash Site Skid Marks leading up to the wrecked SUV (z: 535 down to 518)
+    const skidMat = new THREE.MeshBasicMaterial({
+      color: 0x111111,
+      transparent: true,
+      opacity: 0.68,
+      depthWrite: false
+    });
+    [-0.9, 0.9].forEach(sideOffset => {
+      const skidPoints = [];
+      for (let s = 0; s <= 20; s++) {
+        const sz = 536 - s * 0.85; // 536 to ~519
+        const sx = -183.0 + sideOffset + Math.sin(s * 0.25) * 0.4;
+        const sy = getTerrainHeight(sx, sz) + 0.055;
+        skidPoints.push(new THREE.Vector3(sx, sy, sz));
+      }
+      const skidCurve = new THREE.CatmullRomCurve3(skidPoints);
+      const skidGeom = new THREE.TubeGeometry(skidCurve, 20, 0.14, 4, false);
+      const skidMesh = new THREE.Mesh(skidGeom, skidMat);
+      this.scene.add(skidMesh);
+    });
+
+    // 5. Roadside Details Every 35-40m (Mile Markers, Signposts, Fallen Snow Piles)
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x3d2817, roughness: 0.9 });
+    const signMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.8 });
+    const snowPileMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.75 });
+
+    for (let i = 8; i < numSteps - 8; i += 9) {
       const t = i / numSteps;
       const pt = RoadCurve.getPoint(t);
       const tangent = RoadCurve.getTangent(t).normalize();
       const nx = -tangent.z;
       const nz = tangent.x;
       const len = Math.hypot(nx, nz) || 1;
-      const postX = pt.x - (nx / len) * 2.8;
-      const postZ = pt.z - (nz / len) * 2.8;
-      const postY = getTerrainHeight(postX, postZ);
+      const normX = nx / len;
+      const normZ = nz / len;
 
-      const postGeom = new THREE.CylinderGeometry(0.09, 0.12, 1.8, 5);
-      const postMat = new THREE.MeshStandardMaterial({ color: 0x3d2817, roughness: 0.9 });
-      const post = new THREE.Mesh(postGeom, postMat);
-      post.position.set(postX, postY + 0.85, postZ);
-      post.castShadow = true;
-      this.scene.add(post);
+      const side = (i % 2 === 0) ? 1 : -1;
+      const detailX = pt.x + normX * (totalHalfW + 0.9) * side;
+      const detailZ = pt.z + normZ * (totalHalfW + 0.9) * side;
+      const detailY = getTerrainHeight(detailX, detailZ);
 
-      const markerGeom = new THREE.SphereGeometry(0.12, 6, 6);
-      const markerMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
-      const marker = new THREE.Mesh(markerGeom, markerMat);
-      marker.position.set(postX, postY + 1.75, postZ);
-      this.scene.add(marker);
+      // Detail Type A: Signpost with wooden board
+      if (i % 27 === 0) {
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 1.8, 5), woodMat);
+        post.position.set(detailX, detailY + 0.9, detailZ);
+        post.castShadow = true;
+        this.scene.add(post);
+
+        const board = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.08), signMat);
+        board.position.set(detailX, detailY + 1.6, detailZ);
+        board.rotation.y = Math.atan2(tangent.x, tangent.z) + Math.PI / 2;
+        board.castShadow = true;
+        this.scene.add(board);
+      }
+      // Detail Type B: Mile marker stone pillar with reflector
+      else if (i % 18 === 0) {
+        const marker = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.85, 0.28), woodMat);
+        marker.position.set(detailX, detailY + 0.42, detailZ);
+        marker.castShadow = true;
+        this.scene.add(marker);
+
+        const reflector = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), new THREE.MeshBasicMaterial({ color: 0xf59e0b }));
+        reflector.position.set(detailX, detailY + 0.75, detailZ);
+        this.scene.add(reflector);
+      }
+      // Detail Type C: Roadside fallen snow heap / mound
+      else {
+        const snowHeap = new THREE.Mesh(new THREE.SphereGeometry(0.85 + Math.random() * 0.4, 6, 5), snowPileMat);
+        snowHeap.scale.set(1.3, 0.32, 1.3);
+        snowHeap.position.set(detailX, detailY + 0.1, detailZ);
+        this.scene.add(snowHeap);
+      }
     }
   }
 
   // ---------------------------------------------------------------------------
-  // ZONE 1: CRASH SITE, ROCKSLIDE & SOUTH VALLEY FLARE MAST LANDMARK
+  // ZONE 1: BROKEN MOUNTAIN BRIDGE WASHOUT, CHASM GAP & WRECKED VEHICLE
   // ---------------------------------------------------------------------------
   buildCrashSite() {
-    const carX = -184.0;
-    const carZ = 518.0;
+    const carX = -182.5;
+    const carZ = 520.0;
     const suvGroundY = getTerrainHeight(carX, carZ);
 
     this.wreckedSUV = new RealisticSUVSystem(this.scene, true);
     this.wreckedSUV.root.position.set(carX, suvGroundY + 0.35, carZ);
-    this.wreckedSUV.root.rotation.set(0.06, 0.45, 0.12); // Wrecked / impact tilt against rockslide
+    this.wreckedSUV.root.rotation.set(0.04, 0.05, 0.02); // Tilted near edge of broken bridge
     this.scene.add(this.wreckedSUV.root);
 
     this.colliders.push({
@@ -4132,32 +5183,143 @@ class FrostboundGame {
       maxZ: carZ + 2.6
     });
 
-    // 1. Dynamic Avalanche Boulder Blockade (pinched tightly between river on left and mountain cliff on right)
-    const rockMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.95, metalness: 0.1 });
-    this.roadBlockadeGroup = new THREE.Group();
-    const boulderDefs = [
-      { x: -192, z: 515.0, r: 2.1, y: 1.2 },
-      { x: -188, z: 514.5, r: 2.5, y: 1.5 },
-      { x: -184, z: 514.0, r: 2.9, y: 1.8 },
-      { x: -180, z: 515.2, r: 2.3, y: 1.4 },
-      { x: -176, z: 514.8, r: 2.7, y: 1.7 },
-      { x: -186, z: 514.2, r: 1.9, y: 3.1 },
-      { x: -182, z: 514.6, r: 1.7, y: 2.9 }
-    ];
-    boulderDefs.forEach((b) => {
-      const by = getTerrainHeight(b.x, b.z);
-      const mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(b.r, 1), rockMat);
-      mesh.position.set(b.x, by + b.y * 0.7, b.z);
-      mesh.rotation.set(Math.random() * 3, Math.random() * 3, 0);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      this.roadBlockadeGroup.add(mesh);
+    // 1. Alpine Gorge Wooden River Bridge (Spanning z: 519 down to 509 over gorge river)
+    const bridgeWoodMat = new THREE.MeshStandardMaterial({ color: 0x4a3219, roughness: 0.88 });
+    const beamDarkMat = new THREE.MeshStandardMaterial({ color: 0x2e1e0f, roughness: 0.95 });
+    const metalMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.85, roughness: 0.35 });
+    const warningMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.75 });
+    const stoneAbutmentMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.92 });
+
+    const bridgeDeckGroup = new THREE.Group();
+
+    // Heavy Stone Abutment Foundations on South & North banks
+    [-1, 1].forEach(side => {
+      const az = 514.0 + side * 5.2;
+      const road = getRoadSignedDistance(-177.0, az);
+      const pier = new THREE.Mesh(new THREE.BoxGeometry(6.6, 4.0, 2.2), stoneAbutmentMat);
+      pier.position.set(road.projX, road.projY - 1.2, az);
+      pier.castShadow = true;
+      bridgeDeckGroup.add(pier);
     });
+
+    // Massive longitudinal timber support stringers beneath deck
+    [-1.9, 0.0, 1.9].forEach(sx => {
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.55, 11.2), beamDarkMat);
+      beam.position.set(-176.5 + sx, getTerrainHeight(-176.5, 514.0) - 0.22, 514.0);
+      beam.rotation.y = -0.36; // Follow road bend
+      beam.castShadow = true;
+      bridgeDeckGroup.add(beam);
+    });
+
+    // Solid walkable wooden cross planks across bridge span
+    const plankCount = 24;
+    for (let p = 0; p <= plankCount; p++) {
+      const t = p / plankCount;
+      const pz = 519.0 - t * 10.0;
+      const road = getRoadSignedDistance(-177.0, pz);
+      const px = road.projX;
+      const py = road.projY;
+
+      // Heavy wooden plank
+      const plank = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.16, 0.42), bridgeWoodMat);
+      plank.position.set(px, py + 0.08, pz);
+      plank.rotation.y = -0.36;
+      plank.castShadow = true;
+      plank.receiveShadow = true;
+      bridgeDeckGroup.add(plank);
+
+      // Side Guard Rails with Posts
+      if (p % 4 === 0) {
+        [-2.3, 2.3].forEach(side => {
+          const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 1.35, 5), beamDarkMat);
+          const rad = -0.36;
+          const offX = Math.cos(rad) * side;
+          const offZ = -Math.sin(rad) * side;
+          post.position.set(px + offX, py + 0.65, pz + offZ);
+          post.castShadow = true;
+          bridgeDeckGroup.add(post);
+        });
+      }
+    }
+
+    // Top Horizontal Guard Rails along left and right edges
+    [-2.3, 2.3].forEach(side => {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 11.0), beamDarkMat);
+      const midRoad = getRoadSignedDistance(-177.0, 514.0);
+      const rad = -0.36;
+      rail.position.set(midRoad.projX + Math.cos(rad) * side, midRoad.projY + 1.15, 514.0 - Math.sin(rad) * side);
+      rail.rotation.y = rad;
+      rail.castShadow = true;
+      bridgeDeckGroup.add(rail);
+
+      const midRail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 11.0), bridgeWoodMat);
+      midRail.position.set(midRoad.projX + Math.cos(rad) * side, midRoad.projY + 0.62, 514.0 - Math.sin(rad) * side);
+      midRail.rotation.y = rad;
+      bridgeDeckGroup.add(midRail);
+    });
+
+    this.scene.add(bridgeDeckGroup);
+
+    // Flowing River beneath the bridge gorge
+    const gorgeWaterGeom = new THREE.PlaneGeometry(16.0, 32.0, 8, 8);
+    gorgeWaterGeom.rotateX(-Math.PI / 2);
+    const gorgeWater = new THREE.Mesh(gorgeWaterGeom, this.waterMat);
+    gorgeWater.position.set(-174.0, -11.5, 514.0);
+    gorgeWater.rotation.y = 0.42;
+    this.scene.add(gorgeWater);
+
+    // School of Fish swimming in the gorge river pool below the bridge
+    const gorgeFishGeom = new THREE.ConeGeometry(0.18, 0.85, 5);
+    gorgeFishGeom.rotateX(-Math.PI / 2);
+    const gorgeFishMat = new THREE.MeshStandardMaterial({
+      color: 0x38bdf8,
+      emissive: 0x0284c7,
+      emissiveIntensity: 0.6,
+      metalness: 0.8,
+      roughness: 0.2
+    });
+    this.gorgeFishInst = new THREE.InstancedMesh(gorgeFishGeom, gorgeFishMat, 12);
+    const gDummy = new THREE.Object3D();
+    for (let f = 0; f < 12; f++) {
+      const angle = (f / 12) * Math.PI * 2;
+      const rx = -174.0 + Math.cos(angle) * (3.5 + (f % 3) * 1.2);
+      const rz = 514.0 + Math.sin(angle) * (5.5 + (f % 2) * 2.0);
+      gDummy.position.set(rx, -11.2 + (f % 3) * 0.2, rz);
+      gDummy.rotation.y = angle + Math.PI / 2;
+      gDummy.updateMatrix();
+      this.gorgeFishInst.setMatrixAt(f, gDummy.matrix);
+    }
+    this.gorgeFishInst.instanceMatrix.needsUpdate = true;
+    this.scene.add(this.gorgeFishInst);
+
+    // Initial Story Gate Barricade: Across Bridge Entry at z = 518
+    this.roadBlockadeGroup = new THREE.Group();
+    const barricadeGroup = new THREE.Group();
+    barricadeGroup.position.set(-178.5, suvGroundY, 518.2);
+    barricadeGroup.rotation.y = -0.36;
+
+    [-2.1, 2.1].forEach(bx => {
+      const leg1 = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.4, 0.12), beamDarkMat);
+      leg1.position.set(bx, 0.7, -0.2);
+      leg1.rotation.x = 0.25;
+      barricadeGroup.add(leg1);
+      const leg2 = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.4, 0.12), beamDarkMat);
+      leg2.position.set(bx, 0.7, 0.2);
+      leg2.rotation.x = -0.25;
+      barricadeGroup.add(leg2);
+    });
+
+    const barBoard1 = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.35, 0.08), warningMat);
+    barBoard1.position.set(0, 1.1, 0);
+    barricadeGroup.add(barBoard1);
+    const barBoard2 = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.25, 0.08), beamDarkMat);
+    barBoard2.position.set(0, 0.55, 0);
+    barricadeGroup.add(barBoard2);
+    this.roadBlockadeGroup.add(barricadeGroup);
+
     this.scene.add(this.roadBlockadeGroup);
 
-    // Physical impassable collider for the rockslide blockade
-    // Across z in [512, 517], road curves from x=-177.5 to x=-174.9
-    // Left collider (mountain cliff side of road corridor)
+    // Physical impassable colliders for bridge boundaries
     this.colliders.push({
       id: 'col_suv_blockade_L',
       type: 'aabb',
@@ -4166,7 +5328,6 @@ class FrostboundGame {
       minZ: 512,
       maxZ: 517
     });
-    // Right collider (ravine drop side of road corridor)
     this.colliders.push({
       id: 'col_suv_blockade_R',
       type: 'aabb',
@@ -4175,7 +5336,7 @@ class FrostboundGame {
       minZ: 512,
       maxZ: 517
     });
-    // Full blockade collider (removed after looting)
+    // Center gate barricade collider (unlocked upon looting vehicle)
     this.colliders.push({
       id: 'col_suv_blockade',
       type: 'aabb',
@@ -4204,7 +5365,7 @@ class FrostboundGame {
     const campGroundY = getTerrainHeight(campX, campZ);
 
     const stoneRingMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.95 });
-    const woodMat = new THREE.MeshStandardMaterial({ color: 0x3d2817, roughness: 0.9 });
+    const campWoodMat = new THREE.MeshStandardMaterial({ color: 0x3d2817, roughness: 0.9 });
 
     const campGroup = new THREE.Group();
     campGroup.position.set(campX, campGroundY, campZ);
@@ -4215,7 +5376,7 @@ class FrostboundGame {
     campGroup.add(stoneRing);
 
     for (let l = 0; l < 4; l++) {
-      const woodLog = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 1.8, 5), woodMat);
+      const woodLog = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 1.8, 5), campWoodMat);
       woodLog.position.set(Math.cos(l * 1.5) * 0.4, 0.4, Math.sin(l * 1.5) * 0.4);
       woodLog.rotation.set(0.3, l * 1.5, 0.2);
       campGroup.add(woodLog);
@@ -4259,51 +5420,490 @@ class FrostboundGame {
   }
 
   // ---------------------------------------------------------------------------
-  // ZONE 2/3: ABANDONED VILLAGE (Readable Evacuation Notes & 3 Bridge Parts)
+  // ZONE 2/3: ABANDONED VILLAGE (16 Naturally Arranged Cabins, Central Well, Fence, Crates & Lore)
   // ---------------------------------------------------------------------------
   buildAbandonedVillage() {
     const vGroup = new THREE.Group();
     const woodMat = new THREE.MeshStandardMaterial({ color: 0x3e2817, roughness: 0.92 });
-    const roofMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.85 });
     const stoneMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.95 });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.85 });
     const ironMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.85, roughness: 0.3 });
+    const signMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.8 });
+    const snowRoofMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.75 });
 
-    // 1. Elder Soren's Town Hall Cabin at (152, 250) with Lore Notice Board
-    const h1X = 152.0;
-    const h1Z = 250.0;
-    const h1Y = getTerrainHeight(h1X, h1Z);
+    // 16 Houses naturally scattered around village plateau (x: 120-195, z: 215-285)
+    // Non-grid organic cluster following natural terrain contours
+    const villageHouses = [
+      // 1. Elder Soren's Town Hall Cabin (contains lore note)
+      { id: 'town_hall', x: 152.0, z: 250.0, w: 7.2, h: 4.0, d: 6.2, rot: 0.15, isTownHall: true },
+      // 2. Village Blacksmith Workshop (contains Part 1: Winch Gear)
+      { id: 'blacksmith', x: 172.0, z: 235.0, w: 6.4, h: 3.8, d: 5.8, rot: -0.4, isBlacksmith: true },
+      // 3. Village Storehouse (contains Part 2: Steel Cable)
+      { id: 'storehouse', x: 145.0, z: 235.0, w: 6.8, h: 3.6, d: 5.4, rot: 0.35, isStorehouse: true },
+      // 4. Outpost Tool Shed (contains Part 3: Crank Handle)
+      { id: 'tool_shed', x: 176.0, z: 258.0, w: 5.6, h: 3.4, d: 5.0, rot: -0.25, isToolShed: true },
+      // Additional 12 naturally placed abandoned residential cabins
+      { id: 'house_5', x: 132.0, z: 258.0, w: 5.8, h: 3.5, d: 5.2, rot: 0.55 },
+      { id: 'house_6', x: 138.0, z: 275.0, w: 6.2, h: 3.6, d: 5.0, rot: -0.3 },
+      { id: 'house_7', x: 154.0, z: 270.0, w: 6.0, h: 3.7, d: 5.5, rot: 0.2 },
+      { id: 'house_8', x: 168.0, z: 298.0, w: 5.5, h: 3.4, d: 4.8, rot: 0.8 },
+      { id: 'house_9', x: 188.0, z: 248.0, w: 6.5, h: 3.6, d: 5.2, rot: -0.7 },
+      { id: 'house_10', x: 185.0, z: 228.0, w: 5.8, h: 3.5, d: 4.9, rot: 0.4 },
+      { id: 'house_11', x: 162.0, z: 220.0, w: 6.2, h: 3.8, d: 5.6, rot: -0.15 },
+      { id: 'house_12', x: 135.0, z: 222.0, w: 5.4, h: 3.3, d: 4.8, rot: 0.65 },
+      { id: 'house_13', x: 122.0, z: 242.0, w: 5.6, h: 3.4, d: 5.0, rot: -0.5 },
+      { id: 'house_14', x: 146.0, z: 290.0, w: 6.0, h: 3.5, d: 5.2, rot: 0.1 },
+      { id: 'house_15', x: 216.0, z: 242.0, w: 5.8, h: 3.6, d: 5.0, rot: -0.45 },
+      { id: 'house_16', x: 126.0, z: 268.0, w: 5.5, h: 3.4, d: 4.8, rot: 0.75 }
+    ];
 
-    const cabin1 = new THREE.Group();
-    cabin1.position.set(h1X, h1Y, h1Z);
+    // High-quality materials for authentic alpine village architecture
+    const doorMat = new THREE.MeshStandardMaterial({ color: 0x4a2810, roughness: 0.75 }); // Rich weathered oak door
+    const doorFrameMat = new THREE.MeshStandardMaterial({ color: 0x27190d, roughness: 0.85 }); // Heavy dark timber frame
+    const windowGlassMat = new THREE.MeshStandardMaterial({ color: 0x93c5fd, roughness: 0.15, metalness: 0.5, transparent: true, opacity: 0.85 }); // Warm reflective glass
+    const windowFrameMat = new THREE.MeshStandardMaterial({ color: 0x1f140a, roughness: 0.9 });
+    const beamMat = new THREE.MeshStandardMaterial({ color: 0x2b180d, roughness: 0.9 }); // Structural dark corner timber
+    const porchRoofMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.85 });
+    const cobbleMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.92, metalness: 0.05 }); // Village cobblestone path
 
-    const walls1 = new THREE.Mesh(new THREE.BoxGeometry(7.2, 4.0, 6.2), woodMat);
-    walls1.position.y = 2.0;
-    walls1.castShadow = true;
-    walls1.receiveShadow = true;
-    cabin1.add(walls1);
+    // Cobblestone Pathways connecting each house entrance to the central road / square
+    // Main village center / road intersection point
+    const villageHubX = 162.0;
+    const villageHubZ = 248.0;
 
-    const roof1 = new THREE.Mesh(new THREE.ConeGeometry(5.6, 2.6, 4), roofMat);
-    roof1.position.y = 5.2;
-    roof1.rotation.y = Math.PI / 4;
-    roof1.castShadow = true;
-    cabin1.add(roof1);
+    villageHouses.forEach(h => {
+      // 1. Calculate corners terrain height to guarantee cabin never floats
+      const halfW = h.w / 2;
+      const halfD = h.d / 2;
+      // Sample all 4 corners + center of house footprint
+      const yCenter = getTerrainHeight(h.x, h.z);
+      const yC1 = getTerrainHeight(h.x - halfW, h.z - halfD);
+      const yC2 = getTerrainHeight(h.x + halfW, h.z - halfD);
+      const yC3 = getTerrainHeight(h.x - halfW, h.z + halfD);
+      const yC4 = getTerrainHeight(h.x + halfW, h.z + halfD);
+      const minCornerY = Math.min(yCenter, yC1, yC2, yC3, yC4);
+      const maxCornerY = Math.max(yCenter, yC1, yC2, yC3, yC4);
+      
+      // Base placement height set to minCornerY so no corner can ever hover in the air
+      const baseGroundY = minCornerY;
+      // Stone foundation depth embeds into ground up to 2.2m to seal any slope gaps
+      const foundationDepth = Math.max(1.4, (maxCornerY - minCornerY) + 0.8);
 
-    // Front Porch & Notice Board
-    const porch = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.25, 2.2), woodMat);
-    porch.position.set(0, 0.15, 4.0);
-    cabin1.add(porch);
+      const cabinGroup = new THREE.Group();
+      cabinGroup.position.set(h.x, baseGroundY, h.z);
+      cabinGroup.rotation.y = h.rot;
 
-    const noticePost = new THREE.Mesh(new THREE.BoxGeometry(0.15, 1.8, 0.15), woodMat);
-    noticePost.position.set(1.4, 1.0, 4.6);
-    cabin1.add(noticePost);
+      // Solid Stone Plinth Foundation (Extends underground so house is 100% grounded on any slope)
+      const foundation = new THREE.Mesh(
+        new THREE.BoxGeometry(h.w + 0.35, foundationDepth, h.d + 0.35),
+        stoneMat
+      );
+      foundation.position.y = foundationDepth / 2 - (foundationDepth - 0.4); // Top lip sits ~0.4m above lowest ground
+      foundation.castShadow = true;
+      foundation.receiveShadow = true;
+      cabinGroup.add(foundation);
 
-    const noticeBoard = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 0.08), new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.8 }));
-    noticeBoard.position.set(1.4, 1.5, 4.6);
-    cabin1.add(noticeBoard);
+      // Main Cabin Walls (Wood or Stone depending on workshop type)
+      const floorY = 0.38; // Sits neatly atop stone foundation
+      const wallMat = h.isBlacksmith ? stoneMat : woodMat;
+      const walls = new THREE.Mesh(new THREE.BoxGeometry(h.w, h.h, h.d), wallMat);
+      walls.position.y = floorY + h.h / 2;
+      walls.castShadow = true;
+      walls.receiveShadow = true;
+      cabinGroup.add(walls);
 
-    vGroup.add(cabin1);
+      // Structural Timber Corner Beams (Gives real Nordic log cabin look)
+      const beamThick = 0.32;
+      const beamH = h.h + 0.2;
+      [
+        [-halfW + beamThick / 2, -halfD + beamThick / 2],
+        [halfW - beamThick / 2, -halfD + beamThick / 2],
+        [-halfW + beamThick / 2, halfD - beamThick / 2],
+        [halfW - beamThick / 2, halfD - beamThick / 2]
+      ].forEach(([bx, bz]) => {
+        const beam = new THREE.Mesh(new THREE.BoxGeometry(beamThick, beamH, beamThick), beamMat);
+        beam.position.set(bx, floorY + beamH / 2, bz);
+        beam.castShadow = true;
+        cabinGroup.add(beam);
+      });
+
+      // Realistic Alpine Gable Roof (A-Frame Prism with snow layer and eaves overhang)
+      const roofOverhang = 0.55;
+      const roofW = h.w + roofOverhang * 2;
+      const roofD = h.d + roofOverhang * 2;
+      const roofH = 2.4;
+      const roofY = floorY + h.h;
+
+      // Triangular Gable Roof Prism
+      const roofGeom = new THREE.ConeGeometry(Math.hypot(roofW, roofD) * 0.44, roofH, 4);
+      const roof = new THREE.Mesh(roofGeom, roofMat);
+      roof.position.y = roofY + roofH / 2;
+      roof.rotation.y = Math.PI / 4;
+      roof.castShadow = true;
+      cabinGroup.add(roof);
+
+      // Thick Snow Cap over the Roof (Realistic winter blizzard accumulation)
+      const snowCapGeom = new THREE.ConeGeometry(Math.hypot(roofW, roofD) * 0.45, roofH * 0.95, 4);
+      const snowCap = new THREE.Mesh(snowCapGeom, snowRoofMat);
+      snowCap.position.y = roofY + roofH / 2 + 0.12;
+      snowCap.rotation.y = Math.PI / 4;
+      snowCap.castShadow = true;
+      cabinGroup.add(snowCap);
+
+      // Front Doorway (Front face at +Z = h.d/2)
+      const doorW = 1.15;
+      const doorH = 2.15;
+      const doorZ = halfD + 0.02;
+      const doorY = floorY + doorH / 2;
+
+      // Dark Wood Door Frame
+      const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(doorW + 0.22, doorH + 0.18, 0.14), doorFrameMat);
+      doorFrame.position.set(0, doorY, doorZ);
+      cabinGroup.add(doorFrame);
+
+      // Recessed Wooden Door Planks
+      const doorMesh = new THREE.Mesh(new THREE.BoxGeometry(doorW, doorH, 0.08), doorMat);
+      doorMesh.position.set(0, doorY, doorZ + 0.02);
+      doorMesh.castShadow = true;
+      cabinGroup.add(doorMesh);
+
+      // Iron Door Handle & Cross-Straps
+      const handleMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.22, 6), ironMat);
+      handleMesh.position.set(0.42, doorY, doorZ + 0.07);
+      cabinGroup.add(handleMesh);
+
+      // Front Door Porch / Entrance Stone Landing Steps
+      const stepW = doorW + 0.8;
+      const stepDepth = 1.3;
+      const stepH = 0.85;
+      const step1 = new THREE.Mesh(new THREE.BoxGeometry(stepW, stepH, stepDepth), stoneMat);
+      step1.position.set(0, floorY - stepH / 2 + 0.05, doorZ + stepDepth / 2);
+      step1.receiveShadow = true;
+      cabinGroup.add(step1);
+
+      // Front Entrance Porch Awning over Door
+      const awningW = doorW + 0.6;
+      const awning = new THREE.Mesh(new THREE.BoxGeometry(awningW, 0.14, 1.1), porchRoofMat);
+      awning.position.set(0, floorY + doorH + 0.2, doorZ + 0.5);
+      awning.rotation.x = 0.18;
+      cabinGroup.add(awning);
+
+      // Warm Glowing Wall Lantern Fixture (Only create active dynamic PointLights for important quest workshops to maximize FPS)
+      const lanternFixture = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.26, 0.18), ironMat);
+      lanternFixture.position.set(0.8, floorY + doorH - 0.2, doorZ + 0.35);
+      cabinGroup.add(lanternFixture);
+
+      const lanternGlass = new THREE.Mesh(
+        new THREE.BoxGeometry(0.12, 0.18, 0.12),
+        new THREE.MeshBasicMaterial({ color: 0xffaa22 }) // Vibrant glowing emissive glass
+      );
+      lanternGlass.position.copy(lanternFixture.position);
+      cabinGroup.add(lanternGlass);
+
+      if (h.isTownHall || h.isBlacksmith || h.isStorehouse || h.isToolShed) {
+        const lanternLight = new THREE.PointLight(0xf59e0b, 1.6, 9);
+        lanternLight.position.copy(lanternFixture.position);
+        cabinGroup.add(lanternLight);
+      }
+
+      // Realistic Windows with Glass & Wooden Cross Grids
+      const windowW = 0.95;
+      const windowH = 1.1;
+      const winY = floorY + 1.8;
+
+      // Left & Right Front Windows
+      [-halfW * 0.55, halfW * 0.55].forEach(wx => {
+        // Window Frame
+        const winFrame = new THREE.Mesh(new THREE.BoxGeometry(windowW + 0.12, windowH + 0.12, 0.08), windowFrameMat);
+        winFrame.position.set(wx, winY, doorZ);
+        cabinGroup.add(winFrame);
+
+        // Reflective Glass Pane
+        const winGlass = new THREE.Mesh(new THREE.BoxGeometry(windowW, windowH, 0.04), windowGlassMat);
+        winGlass.position.set(wx, winY, doorZ + 0.01);
+        cabinGroup.add(winGlass);
+
+        // Window Sill
+        const sill = new THREE.Mesh(new THREE.BoxGeometry(windowW + 0.24, 0.08, 0.22), woodMat);
+        sill.position.set(wx, winY - windowH / 2 - 0.04, doorZ + 0.08);
+        cabinGroup.add(sill);
+      });
+
+      // Evacuation Notice / Signs
+      const doorSign = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.4, 0.05), signMat);
+      doorSign.position.set(0, doorY + 0.2, doorZ + 0.06);
+      cabinGroup.add(doorSign);
+
+      // Town Hall Front Porch & Notice Board
+      if (h.isTownHall) {
+        const porch = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.25, 2.5), woodMat);
+        porch.position.set(0, floorY + 0.12, halfD + 1.25);
+        cabinGroup.add(porch);
+
+        const noticePost = new THREE.Mesh(new THREE.BoxGeometry(0.15, 1.8, 0.15), woodMat);
+        noticePost.position.set(1.6, floorY + 0.9, halfD + 1.6);
+        cabinGroup.add(noticePost);
+
+        const noticeBoard = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.85, 0.08), signMat);
+        noticeBoard.position.set(1.6, floorY + 1.4, halfD + 1.6);
+        cabinGroup.add(noticeBoard);
+      }
+
+      // Blacksmith Anvil & Winch Gear (Part 1)
+      if (h.isBlacksmith) {
+        const bench = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.9, 0.9), woodMat);
+        bench.position.set(0, floorY + 0.45, halfD + 1.1);
+        cabinGroup.add(bench);
+
+        const gearMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.15, 8), ironMat);
+        gearMesh.position.set(0, floorY + 1.0, halfD + 1.1);
+        gearMesh.rotation.x = Math.PI / 2;
+        cabinGroup.add(gearMesh);
+      }
+
+      // Storehouse Crate & Steel Cable (Part 2)
+      if (h.isStorehouse) {
+        const crate = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, 1.2), woodMat);
+        crate.position.set(0, floorY + 0.5, halfD + 1.0);
+        cabinGroup.add(crate);
+
+        const cableCoil = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.08, 6, 12), ironMat);
+        cableCoil.position.set(0, floorY + 1.1, halfD + 1.0);
+        cableCoil.rotation.x = Math.PI / 2;
+        cabinGroup.add(cableCoil);
+      }
+
+      // Tool Shed Tool Bench & Crank Handle (Part 3)
+      if (h.isToolShed) {
+        const toolBench = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.8, 0.8), woodMat);
+        toolBench.position.set(0, floorY + 0.4, halfD + 1.0);
+        cabinGroup.add(toolBench);
+
+        const crankMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.7, 6), ironMat);
+        crankMesh.position.set(0, floorY + 0.88, halfD + 1.0);
+        crankMesh.rotation.z = Math.PI / 3;
+        cabinGroup.add(crankMesh);
+      }
+
+      vGroup.add(cabinGroup);
+
+      // Register non-blocking colliders around house walls
+      this.colliders.push({
+        type: 'aabb',
+        minX: h.x - h.w * 0.52,
+        maxX: h.x + h.w * 0.52,
+        minZ: h.z - h.d * 0.52,
+        maxZ: h.z + h.d * 0.52
+      });
+    });
+
+    // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // PERFORMANCE-OPTIMIZED INSTANCED COBBLESTONE & FLAGSTONE STEPPING STONES
+    // Embedded stone slabs with authentic organic variance along all door footpaths & village hub
+    // -------------------------------------------------------------------------
+    const paverGeom = new THREE.CylinderGeometry(0.55, 0.65, 0.70, 7);
+    // Center the geometry so top face is flush with ground, and mass extends 0.70m underground
+    paverGeom.translate(0, -0.35, 0);
+
+    const paverTransforms = [];
+
+    // 1. Generate flagstones along all house doorways connecting to village hub
+    villageHouses.forEach(h => {
+      const halfD = h.d / 2;
+      const doorWorldDist = halfD + 1.2;
+      const doorWorldX = h.x + Math.sin(h.rot) * doorWorldDist;
+      const doorWorldZ = h.z + Math.cos(h.rot) * doorWorldDist;
+
+      const pathDist = Math.hypot(villageHubX - doorWorldX, villageHubZ - doorWorldZ);
+      const stepCount = Math.max(4, Math.floor(pathDist / 1.7));
+      for (let s = 0; s <= stepCount; s++) {
+        const frac = s / stepCount;
+        // Subtle organic meander along footsteps
+        const meander = Math.sin(s * 1.8 + h.x * 0.1) * 0.22;
+        const px = doorWorldX + (villageHubX - doorWorldX) * frac + meander;
+        const pz = doorWorldZ + (villageHubZ - doorWorldZ) * frac + meander;
+        // Sample height and local slope gradient so pavers hug mountain contour
+        const py = getTerrainHeight(px, pz) + 0.04;
+        const hF = getTerrainHeight(px, pz + 0.5);
+        const hB = getTerrainHeight(px, pz - 0.5);
+        const hR = getTerrainHeight(px + 0.5, pz);
+        const hL = getTerrainHeight(px - 0.5, pz);
+        const rotX = Math.atan2(hB - hF, 1.0) * 0.75;
+        const rotZ = Math.atan2(hL - hR, 1.0) * 0.75;
+        const rotY = (s * 1.37 + h.rot) % (Math.PI * 2);
+        const scaleX = 0.85 + Math.sin(s * 3.1) * 0.20;
+        const scaleZ = 0.85 + Math.cos(s * 2.7) * 0.20;
+        paverTransforms.push({ x: px, y: py, z: pz, rotX, rotY, rotZ, scaleX, scaleZ });
+      }
+    });
+
+    // 2. Main Village Promenade & Square Flagstones (Hub to Road and Well)
+    for (let s = 0; s <= 16; s++) {
+      const frac = s / 16;
+      const px = villageHubX + (160.0 - villageHubX) * frac;
+      const pz = villageHubZ + (288.0 - villageHubZ) * frac;
+      [-0.45, 0.45].forEach(offset => {
+        const sx = px + offset;
+        const sz = pz + (Math.sin(s * 2.0) * 0.1);
+        const sy = getTerrainHeight(sx, sz) + 0.04;
+        const hF = getTerrainHeight(sx, sz + 0.5);
+        const hB = getTerrainHeight(sx, sz - 0.5);
+        const hR = getTerrainHeight(sx + 0.5, sz);
+        const hL = getTerrainHeight(sx - 0.5, sz);
+        const rotX = Math.atan2(hB - hF, 1.0) * 0.75;
+        const rotZ = Math.atan2(hL - hR, 1.0) * 0.75;
+        const rotY = (s * 0.9) % (Math.PI * 2);
+        paverTransforms.push({ x: sx, y: sy, z: sz, rotX, rotY, rotZ, scaleX: 1.0, scaleZ: 1.0 });
+      });
+    }
+
+    this.villagePaverTransforms = paverTransforms;
+
+    if (paverTransforms.length > 0) {
+      const paverInst = new THREE.InstancedMesh(paverGeom, cobbleMat, paverTransforms.length);
+      const dummy = new THREE.Object3D();
+      paverTransforms.forEach((t, idx) => {
+        dummy.position.set(t.x, t.y, t.z);
+        dummy.rotation.set(t.rotX || 0, t.rotY, t.rotZ || 0);
+        dummy.scale.set(t.scaleX || 1.0, 1.0, t.scaleZ || 1.0);
+        dummy.updateMatrix();
+        paverInst.setMatrixAt(idx, dummy.matrix);
+      });
+      paverInst.instanceMatrix.needsUpdate = true;
+      paverInst.receiveShadow = false;
+      this.villagePaverInst = paverInst;
+      vGroup.add(paverInst);
+    }
+
+    // 2. Central Stone Village Well at (160, 248)
+    const wellX = 160.0;
+    const wellZ = 248.0;
+    const wellY = getTerrainHeight(wellX, wellZ);
+    const wellGroup = new THREE.Group();
+    wellGroup.position.set(wellX, wellY, wellZ);
+
+    const wellRing = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.8, 1.1, 10, 1, true), stoneMat);
+    wellRing.position.y = 0.55;
+    wellRing.castShadow = true;
+    wellGroup.add(wellRing);
+
+    // Well Roof Posts and Canopy
+    [-1.2, 1.2].forEach(wx => {
+      const wellPost = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 2.4, 5), woodMat);
+      wellPost.position.set(wx, 1.2, 0);
+      wellGroup.add(wellPost);
+    });
+    const wellCanopy = new THREE.Mesh(new THREE.ConeGeometry(2.0, 1.1, 4), roofMat);
+    wellCanopy.position.y = 2.8;
+    wellCanopy.rotation.y = Math.PI / 4;
+    wellGroup.add(wellCanopy);
+    vGroup.add(wellGroup);
+
+    // 3. Central Village Bonfire Hearth & Fire Pits in Gathering Square
+    const firePitLocations = [
+      { x: 155, z: 242, isMainHearth: true },
+      { x: 168, z: 255, isMainHearth: false }
+    ];
+    firePitLocations.forEach(fp => {
+      const fpy = getTerrainHeight(fp.x, fp.z);
+      const pitRing = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.25, 6, 12), stoneMat);
+      pitRing.rotation.x = Math.PI / 2;
+      pitRing.position.set(fp.x, fpy + 0.15, fp.z);
+      vGroup.add(pitRing);
+
+      if (fp.isMainHearth) {
+        // Glowing Village Bonfire Hearth
+        const hearthLight = new THREE.PointLight(0xff7722, 5.0, 36);
+        hearthLight.position.set(fp.x, fpy + 1.2, fp.z);
+        this.scene.add(hearthLight);
+
+        const flameOrb = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffaa00 }));
+        flameOrb.position.set(fp.x, fpy + 0.65, fp.z);
+        vGroup.add(flameOrb);
+
+        const villageFireParticles = new FlameParticleSystem(this.scene, 36, 0.5, 1.8, 0.28);
+        this.campfires.push({
+          pos: new THREE.Vector3(fp.x, fpy, fp.z),
+          light: hearthLight,
+          flameOrb,
+          flameParticles: villageFireParticles
+        });
+
+        // Burning stack of split pine logs
+        for (let l = 0; l < 5; l++) {
+          const log = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 1.6, 6), woodMat);
+          log.position.set(fp.x + Math.cos(l * 1.3) * 0.3, fpy + 0.25, fp.z + Math.sin(l * 1.3) * 0.3);
+          log.rotation.set(0.3, l * 1.3, 0.25);
+          vGroup.add(log);
+        }
+      } else {
+        // Charred unlit wood logs for auxiliary pit
+        for (let l = 0; l < 3; l++) {
+          const charredLog = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 1.3, 5), woodMat);
+          charredLog.position.set(fp.x + Math.cos(l * 2) * 0.25, fpy + 0.2, fp.z + Math.sin(l * 2) * 0.25);
+          charredLog.rotation.set(0.2, l * 2, 0.15);
+          vGroup.add(charredLog);
+        }
+      }
+    });
+
+    // 4. Wooden Fence Perimeter along village boundaries
+    const fenceMat = new THREE.MeshStandardMaterial({ color: 0x4a3219, roughness: 0.9 });
+    for (let f = 0; f < 22; f++) {
+      const fx = 120 + f * 3.4;
+      const fz = 212 + Math.sin(f * 0.6) * 4;
+      const fy = getTerrainHeight(fx, fz);
+
+      const fPost = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 1.4, 5), fenceMat);
+      fPost.position.set(fx, fy + 0.7, fz);
+      fPost.castShadow = true;
+      vGroup.add(fPost);
+
+      const fRail = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.12, 0.08), fenceMat);
+      fRail.position.set(fx + 1.7, fy + 0.9, fz);
+      vGroup.add(fRail);
+    }
+
+    // 5. Scattered Barrels and Crates
+    const barrelMat = new THREE.MeshStandardMaterial({ color: 0x47301c, roughness: 0.85 });
+    const crateMat = new THREE.MeshStandardMaterial({ color: 0x5a3e22, roughness: 0.9 });
+    for (let c = 0; c < 18; c++) {
+      const cx = 140 + Math.sin(c * 1.7) * 40;
+      const cz = 245 + Math.cos(c * 2.3) * 35;
+      const cy = getTerrainHeight(cx, cz);
+
+      if (c % 2 === 0) {
+        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.44, 1.0, 7), barrelMat);
+        barrel.position.set(cx, cy + 0.5, cz);
+        barrel.castShadow = true;
+        vGroup.add(barrel);
+      } else {
+        const crate = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), crateMat);
+        crate.position.set(cx, cy + 0.45, cz);
+        crate.castShadow = true;
+        vGroup.add(crate);
+      }
+    }
+
+    this.scene.add(vGroup);
+
+    // Elder Kaelen NPC Talk & Sacred Torch Interactable
+    const elderPos = new THREE.Vector3(158.0, getTerrainHeight(158.0, 246.0) + 1.2, 246.0);
+    this.createInteractable({
+      id: 'elder_kaelen',
+      name: 'Elder Kaelen (Receive Sacred Torch & Mission)',
+      pos: elderPos,
+      icon: '🔥',
+      reachRadius: 4.8,
+      onInteract: () => {
+        this.talkToElderKaelen();
+      }
+    });
 
     // Readable Lore Note Interactable ("We moved")
+    const h1X = 152.0, h1Z = 250.0;
+    const h1Y = getTerrainHeight(h1X, h1Z);
     this.createInteractable({
       id: 'village_note',
       name: 'Evacuation Notice ("We moved")',
@@ -4320,126 +5920,131 @@ class FrostboundGame {
       }
     });
 
-    // 2. Village Blacksmith Workshop at (172, 235) - Contains Part 1: Winch Gear
-    const h2X = 172.0;
-    const h2Z = 235.0;
+    // ---------------------------------------------------------------------------
+    // THE 3 SACRED VILLAGE RELICS (Winch Gear, Steel Cable, Crank Handle)
+    // ---------------------------------------------------------------------------
+    // Relic 1: Heavy Winch Gear (Inside Blacksmith Workshop at 172.0, 235.0)
+    const h2X = 172.0, h2Z = 235.0;
     const h2Y = getTerrainHeight(h2X, h2Z);
+    const gearRelicGroup = new THREE.Group();
+    gearRelicGroup.position.set(h2X, h2Y + 1.25, h2Z + 3.8);
 
-    const cabin2 = new THREE.Group();
-    cabin2.position.set(h2X, h2Y, h2Z);
+    const gearVisual = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.35, 0.35, 0.14, 12),
+      new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.85, roughness: 0.25 })
+    );
+    gearVisual.rotation.x = Math.PI / 2;
+    gearVisual.castShadow = true;
+    gearRelicGroup.add(gearVisual);
 
-    const walls2 = new THREE.Mesh(new THREE.BoxGeometry(6.4, 3.8, 5.8), stoneMat);
-    walls2.position.y = 1.9;
-    walls2.castShadow = true;
-    cabin2.add(walls2);
+    const gearGlowLight = new THREE.PointLight(0xf59e0b, 1.8, 6);
+    gearGlowLight.position.y = 0.2;
+    gearRelicGroup.add(gearGlowLight);
 
-    const roof2 = new THREE.Mesh(new THREE.ConeGeometry(5.2, 2.4, 4), roofMat);
-    roof2.position.y = 4.8;
-    roof2.rotation.y = Math.PI / 4;
-    cabin2.add(roof2);
+    const gearBeacon = this.createLightRing(1.2, 0xf59e0b, 0.45);
+    gearBeacon.position.set(0, -0.65, 0);
+    gearRelicGroup.add(gearBeacon);
 
-    // Blacksmith Anvil & Workbench
-    const bench = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.9, 0.9), woodMat);
-    bench.position.set(0, 0.45, 3.6);
-    cabin2.add(bench);
+    this.scene.add(gearRelicGroup);
+    this.villageRelicVisuals.push({ id: 'village_gear', group: gearRelicGroup, light: gearGlowLight, beacon: gearBeacon, basePosY: h2Y + 1.25 });
 
-    const gearMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.15, 8), ironMat);
-    gearMesh.position.set(0, 1.0, 3.6);
-    gearMesh.rotation.x = Math.PI / 2;
-    cabin2.add(gearMesh);
-
-    vGroup.add(cabin2);
-
-    // Bridge Part 1: Winch Gear Interactable
     this.createInteractable({
       id: 'village_gear',
-      name: 'Heavy Winch Gear (Bridge Part 1/3)',
-      pos: new THREE.Vector3(h2X, h2Y + 1.1, h2Z + 3.6),
+      name: 'Heavy Winch Gear (Relic 1/3 - Blacksmith)',
+      pos: new THREE.Vector3(h2X, h2Y + 1.2, h2Z + 3.8),
       icon: '⚙️',
-      reachRadius: 4.5,
+      reachRadius: 4.8,
       onInteract: () => {
         this.villagePartsCollected++;
         this.addItem({ id: 'winch_gear', name: 'Heavy Winch Gear', icon: '⚙️', count: 1 });
         this.sfx.playPickup();
-        this.showToast(`Found Winch Gear! (${this.villagePartsCollected}/3 Bridge Parts)`);
+        if (gearRelicGroup) gearRelicGroup.visible = false;
+        if (gearGlowLight) gearGlowLight.intensity = 0;
+        this.showToast(`Found Winch Gear! (${this.villagePartsCollected}/3 Bridge Relics)`);
         this.checkVillageBridgeProgress();
       }
     });
 
-    // 3. Village Storehouse at (145, 235) - Contains Part 2: Steel Cable
-    const h3X = 145.0;
-    const h3Z = 235.0;
+    // Relic 2: High-Tensile Steel Cable (Inside Village Storehouse at 145.0, 235.0)
+    const h3X = 145.0, h3Z = 235.0;
     const h3Y = getTerrainHeight(h3X, h3Z);
+    const cableRelicGroup = new THREE.Group();
+    cableRelicGroup.position.set(h3X, h3Y + 1.25, h3Z + 3.5);
 
-    const cabin3 = new THREE.Group();
-    cabin3.position.set(h3X, h3Y, h3Z);
+    const cableVisual = new THREE.Mesh(
+      new THREE.TorusGeometry(0.34, 0.09, 8, 16),
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.9, roughness: 0.2 })
+    );
+    cableVisual.rotation.x = Math.PI / 2;
+    cableVisual.castShadow = true;
+    cableRelicGroup.add(cableVisual);
 
-    const walls3 = new THREE.Mesh(new THREE.BoxGeometry(6.8, 3.6, 5.4), woodMat);
-    walls3.position.y = 1.8;
-    walls3.castShadow = true;
-    cabin3.add(walls3);
+    const cableGlowLight = new THREE.PointLight(0x38bdf8, 1.8, 6);
+    cableGlowLight.position.y = 0.2;
+    cableRelicGroup.add(cableGlowLight);
 
-    const roof3 = new THREE.Mesh(new THREE.ConeGeometry(5.4, 2.2, 4), roofMat);
-    roof3.position.y = 4.6;
-    roof3.rotation.y = Math.PI / 4;
-    cabin3.add(roof3);
+    const cableBeacon = this.createLightRing(1.2, 0x38bdf8, 0.45);
+    cableBeacon.position.set(0, -0.65, 0);
+    cableRelicGroup.add(cableBeacon);
 
-    // Storage Crate with Steel Cable
-    const crate = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, 1.2), woodMat);
-    crate.position.set(0, 0.5, 3.5);
-    cabin3.add(crate);
+    this.scene.add(cableRelicGroup);
+    this.villageRelicVisuals.push({ id: 'village_cable', group: cableRelicGroup, light: cableGlowLight, beacon: cableBeacon, basePosY: h3Y + 1.25 });
 
-    const cableCoil = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.08, 6, 12), ironMat);
-    cableCoil.position.set(0, 1.1, 3.5);
-    cableCoil.rotation.x = Math.PI / 2;
-    cabin3.add(cableCoil);
-
-    vGroup.add(cabin3);
-
-    // Bridge Part 2: Steel Cable Interactable
     this.createInteractable({
       id: 'village_cable',
-      name: 'Steel Cable Coil (Bridge Part 2/3)',
-      pos: new THREE.Vector3(h3X, h3Y + 1.1, h3Z + 3.5),
+      name: 'Steel Cable Coil (Relic 2/3 - Storehouse)',
+      pos: new THREE.Vector3(h3X, h3Y + 1.2, h3Z + 3.5),
       icon: '⛓️',
-      reachRadius: 4.5,
+      reachRadius: 4.8,
       onInteract: () => {
         this.villagePartsCollected++;
         this.addItem({ id: 'steel_cable', name: 'High-Tensile Steel Cable', icon: '⛓️', count: 1 });
         this.sfx.playPickup();
-        this.showToast(`Found Steel Cable! (${this.villagePartsCollected}/3 Bridge Parts)`);
+        if (cableRelicGroup) cableRelicGroup.visible = false;
+        if (cableGlowLight) cableGlowLight.intensity = 0;
+        this.showToast(`Found Steel Cable! (${this.villagePartsCollected}/3 Bridge Relics)`);
         this.checkVillageBridgeProgress();
       }
     });
 
-    // 4. Watchtower Outpost Tool Rack at (176, 258) - Contains Part 3: Crank Handle
-    const h4X = 176.0;
-    const h4Z = 258.0;
+    // Relic 3: Iron Winch Crank Handle (Inside Outpost Tool Shed at 176.0, 258.0)
+    const h4X = 176.0, h4Z = 258.0;
     const h4Y = getTerrainHeight(h4X, h4Z);
+    const crankRelicGroup = new THREE.Group();
+    crankRelicGroup.position.set(h4X, h4Y + 1.15, h4Z + 3.3);
 
-    const toolBench = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.8, 0.8), woodMat);
-    toolBench.position.set(h4X, h4Y + 0.4, h4Z);
-    vGroup.add(toolBench);
+    const crankVisual = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.065, 0.065, 0.72, 8),
+      new THREE.MeshStandardMaterial({ color: 0x10b981, metalness: 0.85, roughness: 0.25 })
+    );
+    crankVisual.rotation.z = Math.PI / 3;
+    crankVisual.castShadow = true;
+    crankRelicGroup.add(crankVisual);
 
-    const crankMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.7, 6), ironMat);
-    crankMesh.position.set(h4X, h4Y + 0.88, h4Z);
-    crankMesh.rotation.z = Math.PI / 3;
-    vGroup.add(crankMesh);
+    const crankGlowLight = new THREE.PointLight(0x10b981, 1.8, 6);
+    crankGlowLight.position.y = 0.2;
+    crankRelicGroup.add(crankGlowLight);
 
-    this.scene.add(vGroup);
+    const crankBeacon = this.createLightRing(1.2, 0x10b981, 0.45);
+    crankBeacon.position.set(0, -0.65, 0);
+    crankRelicGroup.add(crankBeacon);
 
-    // Bridge Part 3: Winch Crank Handle Interactable
+    this.scene.add(crankRelicGroup);
+    this.villageRelicVisuals.push({ id: 'village_crank', group: crankRelicGroup, light: crankGlowLight, beacon: crankBeacon, basePosY: h4Y + 1.15 });
+
     this.createInteractable({
       id: 'village_crank',
-      name: 'Iron Crank Handle (Bridge Part 3/3)',
-      pos: new THREE.Vector3(h4X, h4Y + 0.9, h4Z),
+      name: 'Iron Crank Handle (Relic 3/3 - Tool Shed)',
+      pos: new THREE.Vector3(h4X, h4Y + 1.1, h4Z + 3.3),
       icon: '🔧',
-      reachRadius: 4.5,
+      reachRadius: 4.8,
       onInteract: () => {
         this.villagePartsCollected++;
         this.addItem({ id: 'crank_handle', name: 'Iron Winch Crank Handle', icon: '🔧', count: 1 });
         this.sfx.playPickup();
-        this.showToast(`Found Winch Crank! (${this.villagePartsCollected}/3 Bridge Parts)`);
+        if (crankRelicGroup) crankRelicGroup.visible = false;
+        if (crankGlowLight) crankGlowLight.intensity = 0;
+        this.showToast(`Found Winch Crank! (${this.villagePartsCollected}/3 Bridge Relics)`);
         this.checkVillageBridgeProgress();
       }
     });
@@ -4708,6 +6313,30 @@ class FrostboundGame {
       }
     });
 
+    // Generator Shed Enclosure around diesel generator
+    const shedWallMat = new THREE.MeshStandardMaterial({ color: 0x3d2817, roughness: 0.9 });
+    const shedCorrugatedMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8, roughness: 0.4 });
+    const genShed = new THREE.Group();
+    genShed.position.set(campX + 12.0, groundY, campZ - 2.0);
+
+    // 3 timber slat walls (open front for generator maintenance)
+    const shedBack = new THREE.Mesh(new THREE.BoxGeometry(3.6, 2.6, 0.15), shedWallMat);
+    shedBack.position.set(0, 1.3, -1.8);
+    genShed.add(shedBack);
+    const shedLeft = new THREE.Mesh(new THREE.BoxGeometry(0.15, 2.6, 3.4), shedWallMat);
+    shedLeft.position.set(-1.8, 1.3, 0);
+    genShed.add(shedLeft);
+    const shedRight = new THREE.Mesh(new THREE.BoxGeometry(0.15, 2.6, 3.4), shedWallMat);
+    shedRight.position.set(1.8, 1.3, 0);
+    genShed.add(shedRight);
+
+    // Slanted corrugated metal roof
+    const shedTinRoof = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.12, 4.0), shedCorrugatedMat);
+    shedTinRoof.position.set(0, 2.7, 0.1);
+    shedTinRoof.rotation.x = 0.15;
+    genShed.add(shedTinRoof);
+    this.scene.add(genShed);
+
     // 2. Open-Air Carpentry Workshop Shed
     const workshopGroup = new THREE.Group();
     workshopGroup.position.set(campX + 8.0, groundY, campZ + 4.0);
@@ -4766,12 +6395,86 @@ class FrostboundGame {
       }
     });
 
-    // 3. Campfire Firepit (Safe Zone with Real Flame Particles & Flicker Light)
+    // 3. Wooden Watchtower with Rope Ladder at (-52, -242)
+    const towerX = campX + 18.0;
+    const towerZ = campZ - 7.0;
+    const towerY = getTerrainHeight(towerX, towerZ);
+    const watchGroup = new THREE.Group();
+    watchGroup.position.set(towerX, towerY, towerZ);
+
+    const towerH = 10.5;
+    // 4 sturdy corner logs
+    [[-1.8, -1.8], [1.8, -1.8], [-1.8, 1.8], [1.8, 1.8]].forEach(([cx, cz]) => {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, towerH, 6), woodMat);
+      leg.position.set(cx, towerH / 2, cz);
+      leg.castShadow = true;
+      watchGroup.add(leg);
+    });
+
+    // Observation platform deck
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.3, 4.2), woodMat);
+    deck.position.y = towerH;
+    deck.castShadow = true;
+    watchGroup.add(deck);
+
+    // Platform railings
+    for (let r = -1.8; r <= 1.8; r += 0.9) {
+      const rPost = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.1, 0.1), woodMat);
+      rPost.position.set(r, towerH + 0.55, 2.0);
+      watchGroup.add(rPost);
+    }
+
+    // Pyramid roof
+    const towerRoof = new THREE.Mesh(new THREE.ConeGeometry(3.6, 2.0, 4), roofMat);
+    towerRoof.position.y = towerH + 2.2;
+    towerRoof.rotation.y = Math.PI / 4;
+    watchGroup.add(towerRoof);
+
+    // Rope Ladder hanging down
+    const ropeMat = new THREE.MeshStandardMaterial({ color: 0x785635, roughness: 0.95 });
+    [-0.35, 0.35].forEach(rx => {
+      const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, towerH, 4), ropeMat);
+      rope.position.set(rx, towerH / 2, 2.05);
+      watchGroup.add(rope);
+    });
+    for (let rungY = 0.6; rungY < towerH; rungY += 0.6) {
+      const rung = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.06, 0.06), woodMat);
+      rung.position.set(0, rungY, 2.05);
+      watchGroup.add(rung);
+    }
+
+    this.scene.add(watchGroup);
+
+    // 4. Stacks of Wooden Supply Crates and Steel Barrels
+    const crateMat = new THREE.MeshStandardMaterial({ color: 0x5a3e22, roughness: 0.9 });
+    const crateDefs = [
+      { x: campX + 10.5, z: campZ + 1.2, s: 1.0, yOff: 0.5 },
+      { x: campX + 11.6, z: campZ + 1.2, s: 0.9, yOff: 0.45 },
+      { x: campX + 11.0, z: campZ + 1.2, s: 0.8, yOff: 1.4 },
+      { x: campX - 9.5, z: campZ + 3.8, s: 1.1, yOff: 0.55 },
+      { x: campX - 10.8, z: campZ + 3.8, s: 0.9, yOff: 0.45 }
+    ];
+    crateDefs.forEach(cd => {
+      const cy = getTerrainHeight(cd.x, cd.z);
+      const cMesh = new THREE.Mesh(new THREE.BoxGeometry(cd.s, cd.s, cd.s), crateMat);
+      cMesh.position.set(cd.x, cy + cd.yOff, cd.z);
+      cMesh.castShadow = true;
+      this.scene.add(cMesh);
+    });
+
+    // 5. Campfire Ring (Safe Zone with Real Flame Particles & Flicker Light)
     const fireX = campX;
     const fireZ = campZ - 4.0;
     const fireLight = new THREE.PointLight(0xff7722, 4.0, 32);
     fireLight.position.set(fireX, groundY + 1.2, fireZ);
     this.scene.add(fireLight);
+
+    // Stone Fire Pit Ring
+    const stoneRingMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.95 });
+    const stoneRing = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.24, 6, 12), stoneRingMat);
+    stoneRing.rotation.x = Math.PI / 2;
+    stoneRing.position.set(fireX, groundY + 0.15, fireZ);
+    this.scene.add(stoneRing);
 
     const flameOrb = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffaa00 }));
     flameOrb.position.set(fireX, groundY + 0.6, fireZ);
@@ -5176,7 +6879,26 @@ class FrostboundGame {
     const dummy = new THREE.Object3D();
     const gltfLoader = new GLTFLoader(globalLoadingManager);
 
-    // Helper to safely bind GLB meshes to InstancedMeshes with procedural fallback
+    // Helper to merge BufferGeometries without external dependencies
+    const mergeGeometriesSimple = (geoms) => {
+      const positions = [];
+      const normals = [];
+      geoms.forEach(g => {
+        const non = g.index ? g.toNonIndexed() : g;
+        const p = non.attributes.position;
+        const n = non.attributes.normal;
+        for (let i = 0; i < p.count; i++) {
+          positions.push(p.getX(i), p.getY(i), p.getZ(i));
+          normals.push(n.getX(i), n.getY(i), n.getZ(i));
+        }
+      });
+      const merged = new THREE.BufferGeometry();
+      merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+      return merged;
+    };
+
+    // Helper to safely bind GLB meshes to InstancedMeshes with toNonIndexed conversion & ground alignment
     const bindGLBToInstanced = (url, instancedMeshes) => {
       if (typeof window === 'undefined' || !window.location) return;
       gltfLoader.load(
@@ -5184,20 +6906,90 @@ class FrostboundGame {
         (gltf) => {
           const parts = [];
           gltf.scene.traverse((c) => {
-            if (c.isMesh && c.geometry) parts.push(c);
+            if (c.isMesh && c.geometry) {
+              if (c.material) {
+                const sanitizeMat = (mat) => {
+                  const m = mat.clone();
+                  m.metalness = 0.0;
+                  m.roughness = 0.88;
+                  const nameLower = (m.name || '').toLowerCase();
+                  if (nameLower.includes('leaf') || nameLower.includes('leaves') || nameLower.includes('grass')) {
+                    if (url.includes('birch')) {
+                      m.color.setHex(0xb58b2a); // Golden autumn alpine aspen / birch
+                    } else if (url.includes('bush')) {
+                      m.color.setHex(0x1e3a24); // Rich wild shrub dark green
+                    } else if (nameLower.includes('dark')) {
+                      m.color.setHex(0x133822); // Deep alpine conifer pine green
+                    } else {
+                      m.color.setHex(0x225c38); // Lush pine / spruce green
+                    }
+                  } else if (nameLower.includes('bark') || nameLower.includes('wood')) {
+                    if (url.includes('birch')) {
+                      m.color.setHex(0x4a3625); // Weathered mountain birch bark
+                    } else if (nameLower.includes('dark')) {
+                      m.color.setHex(0x382215); // Weathered pine bark brown
+                    } else {
+                      m.color.setHex(0x4a3222); // Earthy trunk brown
+                    }
+                  }
+                  return m;
+                };
+                if (Array.isArray(c.material)) {
+                  c.material = c.material.map(sanitizeMat);
+                } else {
+                  c.material = sanitizeMat(c.material);
+                }
+              }
+              parts.push(c);
+            }
           });
-          if (parts.length === 1 && instancedMeshes.length >= 1) {
-            instancedMeshes[0].geometry = parts[0].geometry;
-            instancedMeshes[0].material = parts[0].material;
+
+          if (parts.length === 1) {
+            const nonGeom = (parts[0].geometry.index ? parts[0].geometry.toNonIndexed() : parts[0].geometry).clone();
+            nonGeom.computeBoundingBox();
+            if (nonGeom.boundingBox && nonGeom.boundingBox.min.y !== 0) {
+              nonGeom.translate(0, -nonGeom.boundingBox.min.y, 0);
+            }
+            if (instancedMeshes[0]) {
+              instancedMeshes[0].geometry = nonGeom;
+              if (parts[0].material) instancedMeshes[0].material = parts[0].material;
+              instancedMeshes[0].castShadow = true;
+              instancedMeshes[0].receiveShadow = true;
+            }
+            // If the model is a combined 1-mesh tree (like nature/tree-snow-a.glb) and 2 instanced meshes were provided (trunk+foliage), hide the dummy trunk
+            if (instancedMeshes.length > 1 && instancedMeshes[1]) {
+              instancedMeshes[1].geometry = nonGeom;
+              if (parts[0].material) instancedMeshes[1].material = parts[0].material;
+              instancedMeshes[1].castShadow = true;
+              instancedMeshes[1].receiveShadow = true;
+              // Set the first (trunk) dummy mesh to empty so it doesn't double-render
+              instancedMeshes[0].geometry = new THREE.BufferGeometry();
+            }
+          } else if (parts.length >= 2 && instancedMeshes.length >= 2) {
+            let trunkPart = parts.find(p => p.material && ((p.material.name || '').toLowerCase().includes('bark') || (p.material.name || '').toLowerCase().includes('wood')));
+            let foliagePart = parts.find(p => p.material && ((p.material.name || '').toLowerCase().includes('leaf') || (p.material.name || '').toLowerCase().includes('grass')));
+            if (!trunkPart) trunkPart = parts[1];
+            if (!foliagePart) foliagePart = parts[0];
+
+            const trunkNon = (trunkPart.geometry.index ? trunkPart.geometry.toNonIndexed() : trunkPart.geometry).clone();
+            trunkNon.computeBoundingBox();
+            const trunkMinY = trunkNon.boundingBox ? trunkNon.boundingBox.min.y : 0;
+            if (trunkMinY !== 0) {
+              trunkNon.translate(0, -trunkMinY, 0);
+            }
+            instancedMeshes[0].geometry = trunkNon;
+            if (trunkPart.material) instancedMeshes[0].material = trunkPart.material;
             instancedMeshes[0].castShadow = true;
             instancedMeshes[0].receiveShadow = true;
-          } else if (parts.length >= 2 && instancedMeshes.length >= 2) {
-            for (let i = 0; i < Math.min(parts.length, instancedMeshes.length); i++) {
-              instancedMeshes[i].geometry = parts[i].geometry;
-              instancedMeshes[i].material = parts[i].material;
-              instancedMeshes[i].castShadow = true;
-              instancedMeshes[i].receiveShadow = true;
+
+            const foliageNon = (foliagePart.geometry.index ? foliagePart.geometry.toNonIndexed() : foliagePart.geometry).clone();
+            if (trunkMinY !== 0) {
+              foliageNon.translate(0, -trunkMinY, 0);
             }
+            instancedMeshes[1].geometry = foliageNon;
+            if (foliagePart.material) instancedMeshes[1].material = foliagePart.material;
+            instancedMeshes[1].castShadow = true;
+            instancedMeshes[1].receiveShadow = true;
           }
         },
         undefined,
@@ -5205,131 +6997,337 @@ class FrostboundGame {
       );
     };
 
-    // 1. Alpine Pines (850 instances) - tree_pine.glb
-    const pineCount = 850;
-    const pineTrunkGeom = new THREE.CylinderGeometry(0.08, 0.12, 1.0, 6);
-    pineTrunkGeom.translate(0, 0.5, 0);
-    const pineTrunkMat = new THREE.MeshStandardMaterial({ color: 0x3d2817, roughness: 0.9 });
-    const pineTrunkInst = new THREE.InstancedMesh(pineTrunkGeom, pineTrunkMat, pineCount);
-    pineTrunkInst.castShadow = true;
-    pineTrunkInst.receiveShadow = true;
+    // Track all tree instance transforms so rebuildTerrainMesh can re-snap them to the loaded heightmap
+    this.treeTransforms = [];
 
-    const pineFoliageGeom = new THREE.ConeGeometry(0.48, 1.15, 7);
-    pineFoliageGeom.translate(0, 0.95, 0);
-    const pineFoliageMat = new THREE.MeshStandardMaterial({ color: 0x183c28, roughness: 0.82 });
-    const pineFoliageInst = new THREE.InstancedMesh(pineFoliageGeom, pineFoliageMat, pineCount);
-    pineFoliageInst.castShadow = true;
-    pineFoliageInst.receiveShadow = true;
+    // =========================================================================
+    // 1. TALL TIERED ALPINE PINE (3 Layered Skirts, Rich Deep Pine Green)
+    // =========================================================================
+    const tallPineCount = 950;
+    const tallTrunkGeom = new THREE.CylinderGeometry(0.08, 0.14, 1.3, 6);
+    tallTrunkGeom.translate(0, 0.65, 0);
+    const tallTrunkMat = new THREE.MeshStandardMaterial({ color: 0x321f14, roughness: 0.92 });
+    const tallTrunkInst = new THREE.InstancedMesh(tallTrunkGeom, tallTrunkMat, tallPineCount);
+    tallTrunkInst.castShadow = true;
+    tallTrunkInst.receiveShadow = true;
 
-    bindGLBToInstanced('./assets/models/tree_pine.glb', [pineTrunkInst, pineFoliageInst]);
+    // Organic 3-tiered cone foliage
+    const tp1 = new THREE.ConeGeometry(0.56, 0.75, 7); tp1.translate(0, 0.85, 0);
+    const tp2 = new THREE.ConeGeometry(0.44, 0.70, 7); tp2.translate(0, 1.25, 0);
+    const tp3 = new THREE.ConeGeometry(0.30, 0.65, 7); tp3.translate(0, 1.65, 0);
+    const tallFoliageGeom = mergeGeometriesSimple([tp1, tp2, tp3]);
+    const tallFoliageMat = new THREE.MeshStandardMaterial({ color: 0x133822, roughness: 0.85 }); // Deep alpine green
+    const tallFoliageInst = new THREE.InstancedMesh(tallFoliageGeom, tallFoliageMat, tallPineCount);
+    tallFoliageInst.castShadow = true;
+    tallFoliageInst.receiveShadow = true;
+    bindGLBToInstanced('./assets/models/tree_pine.glb', [tallTrunkInst, tallFoliageInst]);
 
-    // 2. Alpine Birches (400 instances) - tree_birch.glb
-    const birchCount = 400;
-    const birchTrunkGeom = new THREE.CylinderGeometry(0.07, 0.10, 1.1, 6);
-    birchTrunkGeom.translate(0, 0.55, 0);
-    const birchTrunkMat = new THREE.MeshStandardMaterial({ color: 0xded8ce, roughness: 0.75 });
+    // =========================================================================
+    // 2. MOUNTAIN BLUE SPRUCE & SNOW CONIFER (Dense Tiered Needles & Snow Frost)
+    // =========================================================================
+    const spruceCount = 850;
+    const spruceTrunkGeom = new THREE.CylinderGeometry(0.09, 0.13, 0.9, 6);
+    spruceTrunkGeom.translate(0, 0.45, 0);
+    const spruceTrunkMat = new THREE.MeshStandardMaterial({ color: 0x3e2b1d, roughness: 0.9 });
+    const spruceTrunkInst = new THREE.InstancedMesh(spruceTrunkGeom, spruceTrunkMat, spruceCount);
+    spruceTrunkInst.castShadow = true;
+    spruceTrunkInst.receiveShadow = true;
+
+    // 4 wide tiered conifer skirts
+    const sp1 = new THREE.ConeGeometry(0.72, 0.55, 8); sp1.translate(0, 0.65, 0);
+    const sp2 = new THREE.ConeGeometry(0.58, 0.50, 8); sp2.translate(0, 1.05, 0);
+    const sp3 = new THREE.ConeGeometry(0.42, 0.45, 8); sp3.translate(0, 1.45, 0);
+    const sp4 = new THREE.ConeGeometry(0.26, 0.40, 8); sp4.translate(0, 1.80, 0);
+    const spruceFoliageGeom = mergeGeometriesSimple([sp1, sp2, sp3, sp4]);
+    const spruceFoliageMat = new THREE.MeshStandardMaterial({ color: 0x1b4a3a, roughness: 0.82 }); // Blue-green spruce
+    const spruceFoliageInst = new THREE.InstancedMesh(spruceFoliageGeom, spruceFoliageMat, spruceCount);
+    spruceFoliageInst.castShadow = true;
+    spruceFoliageInst.receiveShadow = true;
+    bindGLBToInstanced('./assets/models/nature/tree-snow-a.glb', [spruceTrunkInst, spruceFoliageInst]);
+
+    // =========================================================================
+    // 2B. LUSH ROUND CANOPY DECIDUOUS / NORDIC PINE VARIETY (Reference Sprites)
+    // =========================================================================
+    const oakCount = 550;
+    const oakTrunkGeom = new THREE.CylinderGeometry(0.12, 0.18, 1.1, 6);
+    oakTrunkGeom.translate(0, 0.55, 0);
+    const oakTrunkMat = new THREE.MeshStandardMaterial({ color: 0x422a18, roughness: 0.92 });
+    const oakTrunkInst = new THREE.InstancedMesh(oakTrunkGeom, oakTrunkMat, oakCount);
+    oakTrunkInst.castShadow = true;
+    oakTrunkInst.receiveShadow = true;
+
+    // Multi-lobed lush rounded deciduous canopy matching user reference image
+    const oc1 = new THREE.DodecahedronGeometry(0.52, 1); oc1.translate(0, 1.35, 0);
+    const oc2 = new THREE.DodecahedronGeometry(0.42, 1); oc2.translate(0.18, 1.60, 0.12);
+    const oc3 = new THREE.DodecahedronGeometry(0.38, 1); oc3.translate(-0.16, 1.55, -0.10);
+    const oc4 = new THREE.DodecahedronGeometry(0.32, 1); oc4.translate(0.08, 1.90, -0.05);
+    const oakFoliageGeom = mergeGeometriesSimple([oc1, oc2, oc3, oc4]);
+    const oakFoliageMat = new THREE.MeshStandardMaterial({ color: 0x1b5229, roughness: 0.84 });
+    const oakFoliageInst = new THREE.InstancedMesh(oakFoliageGeom, oakFoliageMat, oakCount);
+    oakFoliageInst.castShadow = true;
+    oakFoliageInst.receiveShadow = true;
+    bindGLBToInstanced('./assets/models/nature/tree.glb', [oakTrunkInst, oakFoliageInst]);
+
+    // =========================================================================
+    // 3. GOLDEN AUTUMN ASPEN / BIRCH (Slender Trunk, Warm Golden Canopy)
+    // =========================================================================
+    const birchCount = 650;
+    const birchTrunkGeom = new THREE.CylinderGeometry(0.065, 0.095, 1.3, 6);
+    birchTrunkGeom.translate(0, 0.65, 0);
+    const birchTrunkMat = new THREE.MeshStandardMaterial({ color: 0x5a4231, roughness: 0.85 });
     const birchTrunkInst = new THREE.InstancedMesh(birchTrunkGeom, birchTrunkMat, birchCount);
     birchTrunkInst.castShadow = true;
 
-    const birchFoliageGeom = new THREE.DodecahedronGeometry(0.42, 1);
-    birchFoliageGeom.translate(0, 1.15, 0);
-    const birchFoliageMat = new THREE.MeshStandardMaterial({ color: 0x3d6b38, roughness: 0.8 });
+    // Multi-cluster rounded deciduous crown with warm golden foliage
+    const bc1 = new THREE.DodecahedronGeometry(0.46, 1); bc1.translate(0, 1.35, 0);
+    const bc2 = new THREE.DodecahedronGeometry(0.34, 1); bc2.translate(0.12, 1.62, 0.08);
+    const bc3 = new THREE.DodecahedronGeometry(0.30, 1); bc3.translate(-0.11, 1.56, -0.10);
+    const birchFoliageGeom = mergeGeometriesSimple([bc1, bc2, bc3]);
+    const birchFoliageMat = new THREE.MeshStandardMaterial({ color: 0x3d6632, roughness: 0.82 }); // Fresh deciduous green
     const birchFoliageInst = new THREE.InstancedMesh(birchFoliageGeom, birchFoliageMat, birchCount);
     birchFoliageInst.castShadow = true;
-
     bindGLBToInstanced('./assets/models/tree_birch.glb', [birchTrunkInst, birchFoliageInst]);
 
-    // 3. Dead / Twisted Trees (320 instances) - tree_dead.glb
-    const deadCount = 320;
+    // =========================================================================
+    // 4. TWISTED DEAD ALPINE TREES (Weathered Stark Wood on Ridges)
+    // =========================================================================
+    const deadCount = 480;
     const deadGeom = new THREE.CylinderGeometry(0.08, 0.12, 1.8, 5);
     deadGeom.translate(0, 0.9, 0);
-    const deadMat = new THREE.MeshStandardMaterial({ color: 0x2e241c, roughness: 0.95 });
+    const deadMat = new THREE.MeshStandardMaterial({ color: 0x271f18, roughness: 0.96 });
     const deadInst = new THREE.InstancedMesh(deadGeom, deadMat, deadCount);
     deadInst.castShadow = true;
-
     bindGLBToInstanced('./assets/models/tree_dead.glb', [deadInst]);
 
-    // 4. Tree Stumps (200 instances) - tree_stump.glb
-    const stumpCount = 200;
+    // =========================================================================
+    // 5. TREE STUMPS
+    // =========================================================================
+    const stumpCount = 280;
     const stumpGeom = new THREE.CylinderGeometry(0.18, 0.22, 0.6, 6);
     stumpGeom.translate(0, 0.3, 0);
     const stumpMat = new THREE.MeshStandardMaterial({ color: 0x483222, roughness: 0.9 });
     const stumpInst = new THREE.InstancedMesh(stumpGeom, stumpMat, stumpCount);
     stumpInst.castShadow = true;
-
     bindGLBToInstanced('./assets/models/tree_stump.glb', [stumpInst]);
 
-    // 5. Alpine Bushes / Shrubs (550 instances) - bush.glb
-    const bushCount = 550;
+    // =========================================================================
+    // 6. BUSHES WITH COLORFUL EDIBLE BERRIES (Red, Blue, Purple, Amber, Pink)
+    // =========================================================================
+    const bushCount = 800;
     const bushGeom = new THREE.DodecahedronGeometry(0.35, 1);
     bushGeom.translate(0, 0.3, 0);
-    const bushMat = new THREE.MeshStandardMaterial({ color: 0x254731, roughness: 0.85 });
+    const bushMat = new THREE.MeshStandardMaterial({ color: 0x1e3a24, roughness: 0.85 }); // Rich deep shrub green
     const bushInst = new THREE.InstancedMesh(bushGeom, bushMat, bushCount);
     bushInst.castShadow = true;
-
     bindGLBToInstanced('./assets/models/bush.glb', [bushInst]);
 
-    // Populate Pines with density from noise and random lean
-    let pineIdx = 0, attempts = 0;
-    while (pineIdx < pineCount && attempts < 8000) {
+    // Multi-cluster 3D berries attached to the outer canopy of the bushes
+    const berryClusterOffsets = [
+      [0.22, 0.28, 0.12],
+      [-0.20, 0.25, 0.14],
+      [0.08, 0.36, -0.18],
+      [-0.14, 0.30, -0.16],
+      [0.24, 0.18, -0.08],
+      [-0.22, 0.17, -0.08],
+      [0.02, 0.40, 0.08]
+    ];
+    const berrySphereGeom = new THREE.SphereGeometry(0.045, 5, 5);
+    const berrySpheres = berryClusterOffsets.map(([ox, oy, oz]) => {
+      const g = berrySphereGeom.clone();
+      g.translate(ox, oy, oz);
+      return g;
+    });
+    const mergedBerryGeom = mergeGeometriesSimple(berrySpheres);
+    const berryMat = new THREE.MeshStandardMaterial({
+      roughness: 0.35,
+      metalness: 0.1,
+      emissiveIntensity: 0.25
+    });
+    const berryInst = new THREE.InstancedMesh(mergedBerryGeom, berryMat, bushCount);
+    berryInst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(bushCount * 3), 3);
+    berryInst.castShadow = true;
+
+    // Palette of vibrant mountain winter berries:
+    const berryPalette = [
+      new THREE.Color(0xdc2626), // Scarlet Cranberry / Lingonberry
+      new THREE.Color(0x2563eb), // Frost Sapphire Huckleberry
+      new THREE.Color(0x7c3aed), // Wild Royal Purple Blackberry
+      new THREE.Color(0xf59e0b), // Golden Amber Arctic Cloudberry
+      new THREE.Color(0xec4899)  // Alpine Wild Rosehip
+    ];
+
+    // Helper for random lean between 0 and 8 degrees (0.0 to 0.14 rad)
+    const getRandomLean = () => {
+      const angle = Math.random() * 0.14;
+      const dir = Math.random() * Math.PI * 2;
+      return [Math.sin(dir) * angle, Math.cos(dir) * angle];
+    };
+
+    // Grounding sink offset: sinking tree roots 0.26m into terrain guarantees 0% floating on hills
+    const SINK_OFFSET = 0.26;
+
+    // Populate Tall Pines (Dense in deep forest, sparse near road)
+    let tallIdx = 0, attempts = 0;
+    while (tallIdx < tallPineCount && attempts < 14000) {
       attempts++;
-      const tx = (Math.random() - 0.5) * 1140;
-      const tz = (Math.random() - 0.5) * 1140;
+      const tx = (Math.random() - 0.5) * 1540;
+      const tz = (Math.random() - 0.5) * 1540;
 
       const road = getRoadSignedDistance(tx, tz);
       if (road.roadDist < 6.8) continue;
-      if (Math.hypot(tx - (-35), tz - 40) < 68) continue; // Lake
-      if (road.signedDist < -5.0 && road.signedDist > -24.0) continue; // Ravine
-      if (Math.hypot(tx - (-180), tz - 520) < 16) continue; // Crash site
-      if (Math.hypot(tx - 170, tz - 260) < 18) continue; // Watchtower
-      if (Math.hypot(tx - (-70), tz - (-235)) < 28) continue; // Hunter camp
-      if (Math.hypot(tx - 0, tz - (-560)) < 24) continue; // Radio tower
+      if (road.roadDist < 22.0 && Math.random() > 0.18) continue;
+      if (Math.hypot(tx - (-35), tz - 40) < 82) continue;
+      if (road.signedDist < -5.0 && road.signedDist > -24.0) continue;
+      if (Math.hypot(tx - (-180), tz - 520) < 16) continue;
+      if (Math.hypot(tx - 160, tz - 250) < 42) continue;
+      if (Math.hypot(tx - (-70), tz - (-235)) < 28) continue;
+      if (Math.hypot(tx - 0, tz - (-560)) < 24) continue;
 
       const noise = Math.sin(tx * 0.016) * Math.cos(tz * 0.016) + Math.sin(tx * 0.04 + tz * 0.02) * 0.35;
-      if (noise < -0.05) continue; // Natural forest clearings
+      if (noise < -0.15) continue;
 
-      const ty = getTerrainHeight(tx, tz);
-      const baseScale = 5.2;
-      const scale = baseScale * (0.85 + Math.random() * 0.45);
-      const leanX = (Math.random() - 0.5) * 0.12;
-      const leanZ = (Math.random() - 0.5) * 0.12;
+      const ty = getTerrainHeight(tx, tz) - SINK_OFFSET;
+      const baseScale = 5.4;
+      const scale = baseScale * (0.7 + Math.random() * 0.7);
+      const [leanX, leanZ] = getRandomLean();
 
       dummy.position.set(tx, ty, tz);
-      dummy.scale.set(scale, scale, scale);
+      dummy.scale.set(scale, scale * 1.15, scale);
       dummy.rotation.set(leanX, Math.random() * Math.PI * 2, leanZ);
       dummy.updateMatrix();
 
-      pineTrunkInst.setMatrixAt(pineIdx, dummy.matrix);
-      pineFoliageInst.setMatrixAt(pineIdx, dummy.matrix);
+      tallTrunkInst.setMatrixAt(tallIdx, dummy.matrix);
+      tallFoliageInst.setMatrixAt(tallIdx, dummy.matrix);
 
-      if (road.roadDist < 28) {
+      this.treeTransforms.push({
+        inst: [tallTrunkInst, tallFoliageInst],
+        idx: tallIdx,
+        x: tx,
+        z: tz,
+        scale: dummy.scale.clone(),
+        rotation: dummy.rotation.clone(),
+        sinkY: SINK_OFFSET
+      });
+
+      if (road.roadDist < 26) {
         this.colliders.push({
           type: 'sphere',
           center: new THREE.Vector2(tx, tz),
-          radius: 0.85 * (scale / baseScale)
+          radius: 0.8 * (scale / baseScale)
         });
       }
-      pineIdx++;
+      tallIdx++;
     }
 
-    // Populate Birches in sub-forest groves
-    let birchIdx = 0; attempts = 0;
-    while (birchIdx < birchCount && attempts < 5000) {
+    // Populate Mountain Blue Spruce (Slopes and forest borders)
+    let spruceIdx = 0; attempts = 0;
+    while (spruceIdx < spruceCount && attempts < 14000) {
       attempts++;
-      const bx = (Math.random() - 0.5) * 1140;
-      const bz = (Math.random() - 0.5) * 1140;
+      const sx = (Math.random() - 0.5) * 1540;
+      const sz = (Math.random() - 0.5) * 1540;
+
+      const road = getRoadSignedDistance(sx, sz);
+      if (road.roadDist < 6.8) continue;
+      if (road.roadDist < 20.0 && Math.random() > 0.22) continue;
+      if (Math.hypot(sx - (-35), sz - 40) < 82) continue;
+      if (road.signedDist < -5.0 && road.signedDist > -24.0) continue;
+      if (Math.hypot(sx - 160, sz - 250) < 40) continue;
+      if (Math.hypot(sx - (-70), sz - (-235)) < 26) continue;
+
+      const ty = getTerrainHeight(sx, sz) - SINK_OFFSET;
+      const baseScale = 4.6;
+      const scale = baseScale * (0.7 + Math.random() * 0.7);
+      const [leanX, leanZ] = getRandomLean();
+
+      dummy.position.set(sx, ty, sz);
+      dummy.scale.set(scale, scale * 1.05, scale);
+      dummy.rotation.set(leanX, Math.random() * Math.PI * 2, leanZ);
+      dummy.updateMatrix();
+
+      spruceTrunkInst.setMatrixAt(spruceIdx, dummy.matrix);
+      spruceFoliageInst.setMatrixAt(spruceIdx, dummy.matrix);
+
+      this.treeTransforms.push({
+        inst: [spruceTrunkInst, spruceFoliageInst],
+        idx: spruceIdx,
+        x: sx,
+        z: sz,
+        scale: dummy.scale.clone(),
+        rotation: dummy.rotation.clone(),
+        sinkY: SINK_OFFSET
+      });
+
+      if (road.roadDist < 24) {
+        this.colliders.push({
+          type: 'sphere',
+          center: new THREE.Vector2(sx, sz),
+          radius: 0.7 * (scale / baseScale)
+        });
+      }
+      spruceIdx++;
+    }
+
+    // Populate Oak & Deciduous Canopy Variety (Lush Round Trees)
+    let oakIdx = 0; attempts = 0;
+    while (oakIdx < oakCount && attempts < 12000) {
+      attempts++;
+      const ox = (Math.random() - 0.5) * 1540;
+      const oz = (Math.random() - 0.5) * 1540;
+
+      const road = getRoadSignedDistance(ox, oz);
+      if (road.roadDist < 6.8) continue;
+      if (road.roadDist < 20.0 && Math.random() > 0.24) continue;
+      if (Math.hypot(ox - (-35), oz - 40) < 82) continue;
+      if (Math.hypot(ox - 160, oz - 250) < 38) continue;
+
+      const noise = Math.cos(ox * 0.02) * Math.sin(oz * 0.02);
+      if (noise < -0.22 || noise > 0.32) continue;
+
+      const oy = getTerrainHeight(ox, oz) - SINK_OFFSET;
+      const baseScale = 4.8;
+      const scale = baseScale * (0.72 + Math.random() * 0.65);
+      const [leanX, leanZ] = getRandomLean();
+
+      dummy.position.set(ox, oy, oz);
+      dummy.scale.set(scale, scale * 1.08, scale);
+      dummy.rotation.set(leanX, Math.random() * Math.PI * 2, leanZ);
+      dummy.updateMatrix();
+
+      oakTrunkInst.setMatrixAt(oakIdx, dummy.matrix);
+      oakFoliageInst.setMatrixAt(oakIdx, dummy.matrix);
+
+      this.treeTransforms.push({
+        inst: [oakTrunkInst, oakFoliageInst],
+        idx: oakIdx,
+        x: ox,
+        z: oz,
+        scale: dummy.scale.clone(),
+        rotation: dummy.rotation.clone(),
+        sinkY: SINK_OFFSET
+      });
+
+      oakIdx++;
+    }
+
+    // Populate Birches & Aspens in groves and meadows
+    let birchIdx = 0; attempts = 0;
+    while (birchIdx < birchCount && attempts < 10000) {
+      attempts++;
+      const bx = (Math.random() - 0.5) * 1540;
+      const bz = (Math.random() - 0.5) * 1540;
       const road = getRoadSignedDistance(bx, bz);
-      if (road.roadDist < 6.5) continue;
-      if (Math.hypot(bx - (-35), bz - 40) < 68) continue;
+      if (road.roadDist < 6.8) continue;
+      if (road.roadDist < 22.0 && Math.random() > 0.20) continue;
+      if (Math.hypot(bx - (-35), bz - 40) < 82) continue;
+      if (Math.hypot(bx - 160, bz - 250) < 40) continue;
 
       const noise = Math.sin(bx * 0.022) * Math.cos(bz * 0.022);
       if (noise < -0.18 || noise > 0.28) continue;
 
-      const by = getTerrainHeight(bx, bz);
-      const baseScale = 4.2;
-      const scale = baseScale * (0.8 + Math.random() * 0.45);
-      const leanX = (Math.random() - 0.5) * 0.10;
-      const leanZ = (Math.random() - 0.5) * 0.10;
+      const by = getTerrainHeight(bx, bz) - SINK_OFFSET;
+      const baseScale = 4.4;
+      const scale = baseScale * (0.7 + Math.random() * 0.7);
+      const [leanX, leanZ] = getRandomLean();
 
       dummy.position.set(bx, by, bz);
       dummy.scale.set(scale, scale, scale);
@@ -5338,45 +7336,71 @@ class FrostboundGame {
 
       birchTrunkInst.setMatrixAt(birchIdx, dummy.matrix);
       birchFoliageInst.setMatrixAt(birchIdx, dummy.matrix);
+
+      this.treeTransforms.push({
+        inst: [birchTrunkInst, birchFoliageInst],
+        idx: birchIdx,
+        x: bx,
+        z: bz,
+        scale: dummy.scale.clone(),
+        rotation: dummy.rotation.clone(),
+        sinkY: SINK_OFFSET
+      });
+
       birchIdx++;
     }
 
-    // Populate Dead Trees (concentrated on stark high ridges and passes)
+    // Populate Dead Trees (concentrated on stark high ridges and ravine ledges)
     let deadIdx = 0; attempts = 0;
-    while (deadIdx < deadCount && attempts < 4000) {
+    while (deadIdx < deadCount && attempts < 5000) {
       attempts++;
-      const dx = (Math.random() - 0.5) * 1140;
-      const dz = (Math.random() - 0.5) * 1140;
+      const dx = (Math.random() - 0.5) * 1540;
+      const dz = (Math.random() - 0.5) * 1540;
       const ty = getTerrainHeight(dx, dz);
-      if (dz <= 360 && dz >= -300 && ty < 28) continue; // Alpine passes & ridges
+      if (dz <= 360 && dz >= -300 && ty < 24) continue;
 
       const road = getRoadSignedDistance(dx, dz);
-      if (road.roadDist < 6.0) continue;
+      if (road.roadDist < 6.5) continue;
+      if (Math.hypot(dx - 160, dz - 250) < 38) continue;
 
-      const baseScale = 3.6;
-      const scale = baseScale * (0.8 + Math.random() * 0.5);
-      dummy.position.set(dx, ty, dz);
+      const baseScale = 3.8;
+      const scale = baseScale * (0.7 + Math.random() * 0.7);
+      const [leanX, leanZ] = getRandomLean();
+
+      dummy.position.set(dx, ty - SINK_OFFSET, dz);
       dummy.scale.set(scale, scale, scale);
-      dummy.rotation.set((Math.random() - 0.5) * 0.22, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.22);
+      dummy.rotation.set(leanX, Math.random() * Math.PI * 2, leanZ);
       dummy.updateMatrix();
 
       deadInst.setMatrixAt(deadIdx, dummy.matrix);
+
+      this.treeTransforms.push({
+        inst: deadInst,
+        idx: deadIdx,
+        x: dx,
+        z: dz,
+        scale: dummy.scale.clone(),
+        rotation: dummy.rotation.clone(),
+        sinkY: SINK_OFFSET
+      });
+
       deadIdx++;
     }
 
     // Populate Stumps near road verges and clearings
     let stumpIdx = 0; attempts = 0;
-    while (stumpIdx < stumpCount && attempts < 3500) {
+    while (stumpIdx < stumpCount && attempts < 4500) {
       attempts++;
-      const sx = (Math.random() - 0.5) * 1140;
-      const sz = (Math.random() - 0.5) * 1140;
+      const sx = (Math.random() - 0.5) * 1540;
+      const sz = (Math.random() - 0.5) * 1540;
       const road = getRoadSignedDistance(sx, sz);
-      if (road.roadDist < 4.0 || road.roadDist > 35.0) continue;
-      if (Math.hypot(sx - (-35), sz - 40) < 68) continue;
+      if (road.roadDist < 4.2 || road.roadDist > 35.0) continue;
+      if (Math.hypot(sx - (-35), sz - 40) < 82) continue;
+      if (Math.hypot(sx - 160, sz - 250) < 36) continue;
 
-      const sy = getTerrainHeight(sx, sz);
+      const sy = getTerrainHeight(sx, sz) - 0.15;
       const baseScale = 2.0;
-      const scale = baseScale * (0.8 + Math.random() * 0.5);
+      const scale = baseScale * (0.7 + Math.random() * 0.7);
 
       dummy.position.set(sx, sy, sz);
       dummy.scale.set(scale, scale * (0.85 + Math.random() * 0.3), scale);
@@ -5384,20 +7408,32 @@ class FrostboundGame {
       dummy.updateMatrix();
 
       stumpInst.setMatrixAt(stumpIdx, dummy.matrix);
+
+      this.treeTransforms.push({
+        inst: stumpInst,
+        idx: stumpIdx,
+        x: sx,
+        z: sz,
+        scale: dummy.scale.clone(),
+        rotation: dummy.rotation.clone(),
+        sinkY: 0.15
+      });
+
       stumpIdx++;
     }
 
-    // Populate Bushes throughout open meadows
+    // Populate Bushes throughout open meadows with Colorful Berries
     let bushIdx = 0; attempts = 0;
-    while (bushIdx < bushCount && attempts < 4000) {
+    while (bushIdx < bushCount && attempts < 6000) {
       attempts++;
-      const ux = (Math.random() - 0.5) * 1140;
-      const uz = (Math.random() - 0.5) * 1140;
+      const ux = (Math.random() - 0.5) * 1540;
+      const uz = (Math.random() - 0.5) * 1540;
       const road = getRoadSignedDistance(ux, uz);
-      if (road.roadDist < 4.5) continue;
-      if (Math.hypot(ux - (-35), uz - 40) < 68) continue;
+      if (road.roadDist < 4.8) continue;
+      if (Math.hypot(ux - (-35), uz - 40) < 82) continue;
+      if (Math.hypot(ux - 160, uz - 250) < 36) continue;
 
-      const uy = getTerrainHeight(ux, uz);
+      const uy = getTerrainHeight(ux, uz) - 0.18;
       const baseScale = 3.2;
       const scale = baseScale * (0.75 + Math.random() * 0.55);
 
@@ -5407,24 +7443,51 @@ class FrostboundGame {
       dummy.updateMatrix();
 
       bushInst.setMatrixAt(bushIdx, dummy.matrix);
+      berryInst.setMatrixAt(bushIdx, dummy.matrix);
+
+      this.treeTransforms.push({
+        inst: [bushInst, berryInst],
+        idx: bushIdx,
+        x: ux,
+        z: uz,
+        scale: dummy.scale.clone(),
+        rotation: dummy.rotation.clone(),
+        sinkY: 0.18
+      });
+
+      // Assign random vibrant berry color from palette
+      const color = berryPalette[bushIdx % berryPalette.length];
+      berryInst.setColorAt(bushIdx, color);
+
       bushIdx++;
     }
 
-    pineTrunkInst.instanceMatrix.needsUpdate = true;
-    pineFoliageInst.instanceMatrix.needsUpdate = true;
+    tallTrunkInst.instanceMatrix.needsUpdate = true;
+    tallFoliageInst.instanceMatrix.needsUpdate = true;
+    spruceTrunkInst.instanceMatrix.needsUpdate = true;
+    spruceFoliageInst.instanceMatrix.needsUpdate = true;
+    oakTrunkInst.instanceMatrix.needsUpdate = true;
+    oakFoliageInst.instanceMatrix.needsUpdate = true;
     birchTrunkInst.instanceMatrix.needsUpdate = true;
     birchFoliageInst.instanceMatrix.needsUpdate = true;
     deadInst.instanceMatrix.needsUpdate = true;
     stumpInst.instanceMatrix.needsUpdate = true;
     bushInst.instanceMatrix.needsUpdate = true;
+    berryInst.instanceMatrix.needsUpdate = true;
+    berryInst.instanceColor.needsUpdate = true;
 
-    this.scene.add(pineTrunkInst);
-    this.scene.add(pineFoliageInst);
+    this.scene.add(tallTrunkInst);
+    this.scene.add(tallFoliageInst);
+    this.scene.add(spruceTrunkInst);
+    this.scene.add(spruceFoliageInst);
+    this.scene.add(oakTrunkInst);
+    this.scene.add(oakFoliageInst);
     this.scene.add(birchTrunkInst);
     this.scene.add(birchFoliageInst);
     this.scene.add(deadInst);
     this.scene.add(stumpInst);
     this.scene.add(bushInst);
+    this.scene.add(berryInst);
   }
 
   // ---------------------------------------------------------------------------
@@ -5441,7 +7504,30 @@ class FrostboundGame {
         (gltf) => {
           const parts = [];
           gltf.scene.traverse((c) => {
-            if (c.isMesh && c.geometry) parts.push(c);
+            if (c.isMesh && c.geometry) {
+              if (c.material) {
+                const sanitizeMat = (mat) => {
+                  const m = mat.clone();
+                  m.metalness = 0.0;
+                  m.roughness = 0.90;
+                  const nameLower = (m.name || '').toLowerCase();
+                  if (nameLower.includes('dirt') || nameLower.includes('rock')) {
+                    m.color.setHex(0x56606e); // Mountain granite rock grey
+                  } else if (nameLower.includes('wood') || nameLower.includes('bark')) {
+                    m.color.setHex(0x422f20); // Dark aged timber
+                  } else if (nameLower.includes('grass')) {
+                    m.color.setHex(0x2d5a32); // Deep moss green
+                  }
+                  return m;
+                };
+                if (Array.isArray(c.material)) {
+                  c.material = c.material.map(sanitizeMat);
+                } else {
+                  c.material = sanitizeMat(c.material);
+                }
+              }
+              parts.push(c);
+            }
           });
           if (parts.length >= 1 && instancedMeshes.length >= 1) {
             instancedMeshes[0].geometry = parts[0].geometry;
@@ -5659,6 +7745,8 @@ class FrostboundGame {
           grassInst.geometry = c.geometry;
           if (c.material) {
             const m = c.material.clone();
+            if (m.metalness !== undefined) m.metalness = 0.0;
+            if (m.roughness !== undefined) m.roughness = 0.85;
             hookWindAndCullShader(m);
             grassInst.material = m;
           }
@@ -5674,6 +7762,8 @@ class FrostboundGame {
       const road = getRoadSignedDistance(gx, gz);
       if (road.roadDist < 2.8) continue;
       if (Math.hypot(gx - (-35), gz - 40) < 68) continue;
+      // Keep village dirt footpaths clean of tall grass clumps so beaten dirt trail is clearly visible
+      if (typeof getVillagePathDistance === 'function' && getVillagePathDistance(gx, gz) < 1.6) continue;
 
       const gy = getTerrainHeight(gx, gz);
       if (gy > 42.0) continue; // Don't spawn grass on high snowy crags
@@ -5698,7 +7788,7 @@ class FrostboundGame {
     const flowerCount = 350;
     const flowerGeom = new THREE.CylinderGeometry(0.04, 0.06, 0.4, 4);
     flowerGeom.translate(0, 0.2, 0);
-    const flowerMat = new THREE.MeshStandardMaterial({ color: 0xdd4455, roughness: 0.8 });
+    const flowerMat = new THREE.MeshStandardMaterial({ color: 0xdd4455, roughness: 0.8, metalness: 0.0 });
     hookWindAndCullShader(flowerMat);
     const flowerInst = new THREE.InstancedMesh(flowerGeom, flowerMat, flowerCount);
 
@@ -5708,6 +7798,8 @@ class FrostboundGame {
           flowerInst.geometry = c.geometry;
           if (c.material) {
             const m = c.material.clone();
+            if (m.metalness !== undefined) m.metalness = 0.0;
+            if (m.roughness !== undefined) m.roughness = 0.85;
             hookWindAndCullShader(m);
             flowerInst.material = m;
           }
@@ -5745,7 +7837,7 @@ class FrostboundGame {
     const pebbleCount = 350;
     const pebbleGeom = new THREE.DodecahedronGeometry(0.18, 0);
     pebbleGeom.translate(0, 0.1, 0);
-    const pebbleMat = new THREE.MeshStandardMaterial({ color: 0x626c7a, roughness: 0.95 });
+    const pebbleMat = new THREE.MeshStandardMaterial({ color: 0x626c7a, roughness: 0.95, metalness: 0.0 });
     const pebbleInst = new THREE.InstancedMesh(pebbleGeom, pebbleMat, pebbleCount);
     pebbleInst.receiveShadow = true;
 
@@ -5753,7 +7845,12 @@ class FrostboundGame {
       gltf.scene.traverse((c) => {
         if (c.isMesh && c.geometry) {
           pebbleInst.geometry = c.geometry;
-          if (c.material) pebbleInst.material = c.material;
+          if (c.material) {
+            const m = c.material.clone();
+            if (m.metalness !== undefined) m.metalness = 0.0;
+            if (m.roughness !== undefined) m.roughness = 0.90;
+            pebbleInst.material = m;
+          }
         }
       });
     }, undefined, (err) => console.warn('Pebble GLB fallback active', err));
@@ -5824,15 +7921,83 @@ class FrostboundGame {
     const lakeWaterX = -35.0;
     const lakeWaterZ = 32.0;
     const lakeWaterY = getTerrainHeight(lakeWaterX, lakeWaterZ);
+
+    // Glowing water ripples & shoreline pier
+    const lakeBeacon = this.createLightRing(2.0, 0x38bdf8, 0.4);
+    lakeBeacon.position.set(lakeWaterX, lakeWaterY + 0.15, lakeWaterZ);
+    this.scene.add(lakeBeacon);
+
     this.createInteractable({
       id: 'lake_water',
-      name: 'Collect Pure Meltwater (Lake Shore)',
+      name: 'Collect Pure Meltwater (Glacial Lake Shore)',
       pos: new THREE.Vector3(lakeWaterX, lakeWaterY + 0.4, lakeWaterZ),
       icon: '💧',
       reachRadius: 5.2,
       onInteract: () => {
         this.collectWater();
       }
+    });
+
+    // 1b-2. Glacial River Fishing Outpost (x = -22.0, z = 22.0)
+    const fishSpotX = -22.0;
+    const fishSpotZ = 22.0;
+    const fishSpotY = getTerrainHeight(fishSpotX, fishSpotZ);
+
+    // Rustic wooden fishing pier
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x451a03, roughness: 0.9 });
+    const pier = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.25, 4.2), woodMat);
+    pier.position.set(fishSpotX, fishSpotY + 0.2, fishSpotZ);
+    pier.castShadow = true;
+    this.scene.add(pier);
+
+    const fishLight = new THREE.PointLight(0x38bdf8, 1.8, 8);
+    fishLight.position.set(fishSpotX, fishSpotY + 1.1, fishSpotZ);
+    this.scene.add(fishLight);
+
+    const fishBeacon = this.createLightRing(1.6, 0x06b6d4, 0.45);
+    fishBeacon.position.set(fishSpotX, fishSpotY + 0.1, fishSpotZ);
+    this.scene.add(fishBeacon);
+
+    this.createInteractable({
+      id: 'river_fishing',
+      name: 'Catch Glacial River Trout (Fishing Pier)',
+      pos: new THREE.Vector3(fishSpotX, fishSpotY + 0.5, fishSpotZ),
+      icon: '🐟',
+      reachRadius: 5.0,
+      onInteract: () => {
+        this.catchFish();
+      }
+    });
+
+    // 1b-3. Ancient Pine Torch Resin Harvest Points (Refuels and extends torch)
+    const resinLocations = [
+      { x: 12.0, z: 42.0 },
+      { x: -50.0, z: 12.0 }
+    ];
+    resinLocations.forEach((loc, idx) => {
+      const ry = getTerrainHeight(loc.x, loc.z);
+      const resinOrb = new THREE.Mesh(
+        new THREE.SphereGeometry(0.22, 8, 8),
+        new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.2, metalness: 0.1 })
+      );
+      resinOrb.position.set(loc.x, ry + 1.2, loc.z);
+      resinOrb.castShadow = true;
+      this.scene.add(resinOrb);
+
+      const rLight = new THREE.PointLight(0xf59e0b, 1.4, 5);
+      rLight.position.set(loc.x, ry + 1.2, loc.z);
+      this.scene.add(rLight);
+
+      this.createInteractable({
+        id: `pine_resin_${idx}`,
+        name: 'Harvest Golden Pine Resin (Refuel Sacred Torch)',
+        pos: new THREE.Vector3(loc.x, ry + 1.2, loc.z),
+        icon: '✨',
+        reachRadius: 4.8,
+        onInteract: () => {
+          this.harvestResin(resinOrb, rLight);
+        }
+      });
     });
 
     // 1c. Zone 3/4 Meadow Surveyor Expedition Tent & Auxiliary Diesel Fuel Cache (x = -45, z = -120)
@@ -6558,7 +8723,11 @@ class FrostboundGame {
       this.missions[missionIdx + 1].active = true;
     }
 
-    if (id === 'suv_loot') {
+    if (id === 'elder_torch') {
+      this.gates.elderTorch = true;
+      this.showToast("🔥 Chapter 1 Complete: The Elder's Blessing received! Scavenge 3 bridge parts from village workshops.");
+      this.showSubtitle('MISSION 2: THE GORGE DRAWBRIDGE', 'Scavenge 3 bridge parts (Winch Gear, Steel Cable, Crank) from village workshops and lower the drawbridge.', 7.0);
+    } else if (id === 'suv_loot') {
       this.gates.suvBlockade = true;
       // Remove the center gap collider so player can squeeze through
       this.colliders = this.colliders.filter(c => c.id !== 'col_suv_blockade');
@@ -6585,8 +8754,8 @@ class FrostboundGame {
         };
         animateBlockade();
       }
-      this.showToast('🚗 Chapter 1 Complete: SUV supplies scavenged. Head north towards canyon!');
-      this.showSubtitle('MISSION 2: SURVIVE THE FIRST NIGHT', 'Sunset is closing in fast! Gather wood and ignite a campfire before dark.', 6.5);
+      this.showToast('Chapter 1 Complete: SUV supplies scavenged. Cross the wooden bridge over the gorge river!');
+      this.showSubtitle('MISSION 2: CROSS BRIDGE & SURVIVE FIRST NIGHT', 'Cross the wooden bridge into the canyon. Gather dry pine wood and build a campfire before dark!', 6.5);
     } else if (id === 'first_night') {
       this.gates.firstNight = true;
       this.colliders = this.colliders.filter(c => c.id !== 'col_rockslide');
@@ -6690,91 +8859,145 @@ class FrostboundGame {
     }
   }
 
-  startSUVIntroCutscene() {
-    this.isSUVIntro = true;
-    this.suvIntroTime = 0;
-    this.suvBouldersFallen = false;
+  // ---------------------------------------------------------------------------
+  // SOLSTICE VILLAGE INTRO CUTSCENE & ELDER DIALOGUE
+  // ---------------------------------------------------------------------------
+  startVillageIntroCutscene() {
+    this.isVillageIntro = true;
+    this.villageIntroTime = 0;
+
     const overlay = document.getElementById('cinematic-overlay');
     if (overlay) overlay.classList.remove('hidden');
+    this.updateCinematicOverlay(
+      'CHAPTER 1: THE CURSED ECLIPSE',
+      'SOLSTICE MOUNTAIN VILLAGE',
+      'Speak with Elder Kaelen by the sacred bonfire • Claim the Sacred Torch of Solstice'
+    );
+
     const prompt = document.getElementById('interaction-prompt');
     if (prompt) prompt.classList.add('hidden');
 
-    const road = getRoadSignedDistance(-180.0, 552.0);
-    this.suvIntroCenterX = road.projX;
-
-    const suv = this.wreckedSUV;
-    const startY = getTerrainHeight(this.suvIntroCenterX, 552.0);
-    if (suv) {
-      suv.root.position.set(this.suvIntroCenterX, startY + 0.35, 552.0);
-      suv.root.rotation.set(0, 0, 0);
-    }
-
-    // Hide first-person arms & torch during intro
+    // Hide first-person arms during intro cinematic pan
     if (this.fpArms) this.fpArms.root.visible = false;
     if (this.torchLight) this.torchLight.intensity = 0;
     if (this.flameMesh) this.flameMesh.visible = false;
 
-    this.sfx.playRadioSpeech("Winter storm is coming. All villagers, move out now.");
-    this.showSubtitle("📻 RADIO TRANSMISSION", "Winter storm is coming. All villagers, move out now.", 7.0);
+    // Camera initial high dramatic cinematic sweep overlooking the village square
+    const vY = getTerrainHeight(160.0, 248.0);
+    this.camera.position.set(168.0, vY + 4.8, 258.0);
+    this.camera.lookAt(158.0, vY + 1.2, 246.0);
+
+    this.sfx.playRadioSpeech("The eternal frost has fallen upon Solstice. Traveler, approach Elder Kaelen.");
+    this.showSubtitle("ELDER KAELEN", "Traveler... the Eternal Eclipse has frozen our valley. Come forward and take the Sacred Torch!", 7.0);
   }
 
-  updateSUVIntroCutscene(delta) {
-    this.suvIntroTime += delta;
-    const suv = this.wreckedSUV;
-    const carX = this.suvIntroCenterX || -180.0; // road centerline X
+  updateVillageIntroCutscene(delta) {
+    this.villageIntroTime += delta;
+    const vY = getTerrainHeight(160.0, 248.0);
+    const elderY = getTerrainHeight(158.0, 246.0);
 
-    if (this.suvIntroTime < 3.4) {
-      // SUV moving forward along road from z = 552 towards z = 518
-      const t = Math.min(1.0, this.suvIntroTime / 3.4);
-      const curZ = 552.0 - t * 34.0;
-      const road = getRoadSignedDistance(carX, curZ);
-      const curX = road.projX;
-      const curY = getTerrainHeight(curX, curZ);
+    if (this.villageIntroTime < 3.8) {
+      // Smooth cinematic camera swoop from elevated square corner down to eye level in front of Elder Kaelen
+      const t = Math.min(1.0, this.villageIntroTime / 3.8);
+      const ease = t * t * (3 - 2 * t);
 
-      if (suv) {
-        suv.root.position.set(curX, curY + 0.35, curZ);
-        suv.update(delta, 16.0);
-      }
-
-      // Smooth GTA-style 3rd-person chase camera following behind and slightly above the SUV
-      const camY = curY + 2.8 + Math.sin(this.suvIntroTime * 18.0) * 0.04;
-      const camZ = curZ + 6.8;
-      this.camera.position.set(curX, camY, camZ);
-      this.camera.lookAt(curX, curY + 1.1, curZ - 14.0);
-
-      // Trigger rockslide at t = 2.4s
-      if (this.suvIntroTime >= 2.4 && !this.suvBouldersFallen) {
-        this.suvBouldersFallen = true;
-        this.sfx.playRockslideRumble();
-        this.triggerScreenShake(0.85);
-        this.showSubtitle("DRIVER", "WATCH OUT! Boulders tumbling from the mountain cliff!", 4.0);
-      }
+      const startCam = new THREE.Vector3(166.0, vY + 4.2, 256.0);
+      const endCam = new THREE.Vector3(160.2, vY + 1.8, 248.2);
+      this.camera.position.lerpVectors(startCam, endCam, ease);
+      this.camera.lookAt(158.0, elderY + 1.35, 246.0);
     } else {
-      // SUV stopped at z = 518 (Wrecked against the landslide blockade)
-      const stopZ = 518.0;
-      const road = getRoadSignedDistance(carX, stopZ);
-      const curX = road.projX;
-      const curY = getTerrainHeight(curX, stopZ);
-
-      if (suv) {
-        suv.root.position.set(curX, curY + 0.35, stopZ);
-        suv.root.rotation.set(0.06, 0.45, 0.12);
-        suv.update(delta, 0);
-      }
-
-      // Dramatic cinematic 3/4 angle overlooking wrecked vehicle and boulders
-      this.camera.position.set(curX - 4.2, curY + 2.2, stopZ + 4.8);
-      this.camera.lookAt(curX, curY + 1.0, stopZ);
+      // Camera settles in front of Elder Kaelen looking directly at him and the sacred bonfire
+      this.camera.position.set(160.0, vY + 1.7, 248.0);
+      this.camera.lookAt(158.0, elderY + 1.35, 246.0);
 
       const prompt = document.getElementById('interaction-prompt');
       if (prompt) {
         prompt.classList.remove('hidden');
-        document.getElementById('interact-text').textContent = 'Press [E] or [Space] to Exit Damaged SUV';
+        const txt = document.getElementById('interact-text');
+        if (txt) txt.textContent = 'Press [E] or [Space] to Approach Elder Kaelen';
       }
     }
   }
 
+  endVillageIntroCutscene() {
+    if (!this.isVillageIntro) return;
+    this.isVillageIntro = false;
+
+    const overlay = document.getElementById('cinematic-overlay');
+    if (overlay) overlay.classList.add('hidden');
+
+    const prompt = document.getElementById('interaction-prompt');
+    if (prompt) prompt.classList.add('hidden');
+
+    // Position player safely standing in front of Elder Kaelen
+    const vY = getTerrainHeight(160.0, 248.0);
+    this.player.position.set(160.0, vY + 0.5, 248.0);
+    this.camera.position.set(160.0, vY + 1.7, 248.0);
+
+    // Face directly towards Elder Kaelen at (158.0, 246.0)
+    const dx = 158.0 - 160.0;
+    const dz = 246.0 - 248.0;
+    this.cameraYaw = Math.atan2(-dx, -dz);
+    this.cameraPitch = 0;
+    this.lastSafePosition = this.player.position.clone();
+
+    // Restore first person arms
+    if (this.fpArms && this.cameraMode === 'first') this.fpArms.root.visible = true;
+
+    this.container.requestPointerLock();
+    this.showToast('Approached Elder Kaelen! Press [E] to Speak and Receive the Sacred Torch.');
+  }
+
+  talkToElderKaelen() {
+    const mElder = this.missions.find(m => m.id === 'elder_torch');
+
+    if (mElder && !mElder.completed) {
+      // First interaction: Dialogue & Torch handoff
+      if (this.elderKaelen) {
+        this.elderKaelen.handOverTorch();
+      }
+
+      // Add Sacred Torch and basic survival supplies to inventory
+      this.addItem({ id: 'torch', name: 'Sacred Torch of Solstice', icon: '🔥', count: 1 });
+      this.addItem({ id: 'oil', name: 'Sacred Hearth Oil', icon: '🛢️', count: 2 });
+      this.addItem({ id: 'matches', name: 'Solstice Flint Matches', icon: '✨', count: 5 });
+      this.addItem({ id: 'blanket', name: 'Thermal Wool Cloak', icon: '🧣', count: 1 });
+      this.addItem({ id: 'ration', name: 'Alpine Smoked Rations', icon: '🥫', count: 3 });
+
+      this.torchFuel = 100;
+      this.warmth = 100;
+      this.isTorchOn = true;
+
+      if (this.torchLight) this.torchLight.intensity = 2.5;
+      if (this.flameMesh) this.flameMesh.visible = true;
+
+      this.sfx.playTorchIgnite();
+      this.sfx.playPickup();
+      this.sfx.playRadioSpeech("Take the Sacred Torch. It repels shadow beasts and keeps you warm. Find the 3 bridge parts to cross the gorge!");
+
+      this.openNoteModal({
+        badge: "🔥 ELDER'S DECREE",
+        title: 'THE BLESSING OF SOLSTICE',
+        author: 'Village Elder Kaelen',
+        body: '“The Eternal Frost has consumed our valley, and shadow creatures creep through the blizzards. This Sacred Torch carries the primordial flame of Solstice. Guard it with your life! Search our village workshops for the 3 missing bridge parts—the Winch Gear, Steel Cable, and Crank Handle—then unfreeze the drawbridge and seek the mountain summit!”'
+      });
+
+      this.showSubtitle("ELDER KAELEN", "“Take the Sacred Torch! Find the 3 bridge parts in the village workshops to lower the drawbridge!”", 7.5);
+      this.showToast('🔥 Sacred Torch Acquired! Mission Complete: Speak with Elder Kaelen.');
+      this.completeMission('elder_torch');
+    } else {
+      // Repeat talk: Guidance
+      this.sfx.playRadioSpeech("Check the Blacksmith, Storehouse, and Tool Shed for the drawbridge parts.");
+      this.showSubtitle("ELDER KAELEN", "“Search the Blacksmith, Storehouse, and Tool Shed nearby for the 3 drawbridge repair parts!”", 6.0);
+      this.showToast('Elder Kaelen: "Search the village workshops for the 3 drawbridge parts!"');
+    }
+  }
+
   exitSUV() {
+    if (this.isVillageIntro) {
+      this.endVillageIntroCutscene();
+      return;
+    }
     if (!this.isSUVIntro) return;
     this.isSUVIntro = false;
     const overlay = document.getElementById('cinematic-overlay');
@@ -6800,8 +9023,8 @@ class FrostboundGame {
     }
 
     this.container.requestPointerLock();
-    this.showSubtitle("SURVIVOR", "The road is sealed between the river and cliff. I must loot the SUV storage before dark.", 6.0);
-    this.showToast("Exited damaged SUV. Press [E] to loot emergency supplies from the trunk!");
+    this.showSubtitle("SURVIVOR", "The mountain bridge is washed out. No vehicle can cross. I must loot the car and cross on foot.", 6.0);
+    this.showToast("Exited vehicle. Press [E] to loot emergency supplies from the trunk!");
   }
 
   lootSUV() {
@@ -6819,8 +9042,12 @@ class FrostboundGame {
 
   igniteFirstNightCampfire() {
     const campPos = new THREE.Vector3(-130, getTerrainHeight(-130, 450), 450);
-    const fireLight = new THREE.PointLight(0xff6600, 3.8, 16, 1.5);
-    fireLight.position.set(campPos.x, campPos.y + 0.8, campPos.z);
+    const fireLight = new THREE.PointLight(0xff7722, 4.2, 22, 1.4);
+    fireLight.position.set(campPos.x, campPos.y + 0.85, campPos.z);
+    fireLight.castShadow = true;
+    fireLight.shadow.mapSize.width = 1024;
+    fireLight.shadow.mapSize.height = 1024;
+    fireLight.shadow.bias = -0.0015;
     this.scene.add(fireLight);
 
     const fireParticles = new FlameParticleSystem(this.scene, 32, 0.45, 1.5, 0.25);
@@ -6838,20 +9065,108 @@ class FrostboundGame {
     this.updateMissionHUD();
     if (this.isMapOpen) this.renderFullscreenMap();
     if (this.villagePartsCollected >= 3) {
-      this.showToast('All 3 bridge parts collected! Proceed to the Drawbridge Winch to cross the gorge.');
+      this.sfx.playRadioSpeech("All three bridge relics recovered! Head to the gorge drawbridge winch to lower the crossing.");
+      this.showSubtitle("QUEST UPDATE", "All 3 bridge relics recovered! Proceed to the Drawbridge Winch to unlock the crossing.", 6.5);
+      this.showToast('✨ All 3 Bridge Relics Collected! Head to the Drawbridge Winch.');
     }
   }
 
-  lowerDrawbridge() {
+  // ---------------------------------------------------------------------------
+  // GORGE DRAWBRIDGE CINEMATIC LOWERING & CUTSCENE
+  // ---------------------------------------------------------------------------
+  startDrawbridgeCutscene() {
+    this.isDrawbridgeCutscene = true;
+    this.drawbridgeCutsceneTime = 0;
+
+    const overlay = document.getElementById('cinematic-overlay');
+    if (overlay) overlay.classList.remove('hidden');
+    this.updateCinematicOverlay(
+      'CHAPTER 2: CROSSING THE GORGE',
+      'THE GORGE DRAWBRIDGE LOWERED',
+      'Ancient mechanisms grind into motion • The path north through the canyon is open'
+    );
+
+    const prompt = document.getElementById('interaction-prompt');
+    if (prompt) prompt.classList.add('hidden');
+
+    if (this.fpArms) this.fpArms.root.visible = false;
+    if (this.torchLight) this.torchLight.intensity = 0;
+    if (this.flameMesh) this.flameMesh.visible = false;
+
+    // Heavy mechanical gear sounds and screen shake
+    this.sfx.playDrawbridgeLower();
+    this.triggerScreenShake(0.85);
+
+    this.sfx.playRadioSpeech("The drawbridge is lowered! The canyon crossing is clear. Watch the mountain shadows!");
+    this.showSubtitle("VILLAGE ELDER", "“The drawbridge is down! The road into the high canyon is open. Cross before dark!”", 7.0);
+  }
+
+  updateDrawbridgeCutscene(delta) {
+    this.drawbridgeCutsceneTime += delta;
+    const duration = 4.2;
+
+    if (!this.bridgeGateGroup) return;
+
+    // Animate portcullis / drawbridge rotating from upright (0) down to flat (PI / 2)
+    const t = Math.min(1.0, this.drawbridgeCutsceneTime / 3.2);
+    const ease = t * t * (3 - 2 * t);
+    this.bridgeGateGroup.rotation.x = ease * (Math.PI / 2);
+    this.bridgeGateGroup.position.y = (this.bridgeGateGroup.userData.origY || this.bridgeGateGroup.position.y);
+    if (!this.bridgeGateGroup.userData.origY) {
+      this.bridgeGateGroup.userData.origY = this.bridgeGateGroup.position.y;
+    }
+    this.bridgeGateGroup.position.y = this.bridgeGateGroup.userData.origY - ease * 1.8;
+
+    // Camera dramatic cinematic angle overlooking the drawbridge lowering over the icy gorge
+    const gatePos = this.bridgeGateGroup.position;
+    const camAngle = -0.5 + t * 0.35;
+    const camDist = 12.0;
+    this.camera.position.set(
+      gatePos.x + Math.sin(camAngle) * camDist,
+      gatePos.y + 4.2 + Math.sin(t * Math.PI) * 1.2,
+      gatePos.z + Math.cos(camAngle) * camDist
+    );
+    this.camera.lookAt(gatePos.x, gatePos.y + 1.2, gatePos.z);
+
+    if (this.drawbridgeCutsceneTime >= duration) {
+      this.endDrawbridgeCutscene();
+    }
+  }
+
+  endDrawbridgeCutscene() {
+    if (!this.isDrawbridgeCutscene) return;
+    this.isDrawbridgeCutscene = false;
+
+    const overlay = document.getElementById('cinematic-overlay');
+    if (overlay) overlay.classList.add('hidden');
+
+    const prompt = document.getElementById('interaction-prompt');
+    if (prompt) prompt.classList.add('hidden');
+
+    // Remove bridge barrier collider permanently
+    this.colliders = this.colliders.filter(c => c.id !== 'col_bridge');
+
     if (this.bridgeGateGroup) {
       this.bridgeGateGroup.rotation.x = Math.PI / 2;
-      this.bridgeGateGroup.position.y -= 1.8;
+      if (this.bridgeGateGroup.userData && this.bridgeGateGroup.userData.origY) {
+        this.bridgeGateGroup.position.y = this.bridgeGateGroup.userData.origY - 1.8;
+      }
     }
-    this.colliders = this.colliders.filter(c => c.id !== 'col_bridge');
-    this.sfx.playDrawbridgeLower();
-    this.triggerScreenShake(0.55);
-    this.showToast('Gorge Drawbridge lowered! Route across the river is open.');
+
+    // Restore first person view & player controls
+    if (this.fpArms && this.cameraMode === 'first') this.fpArms.root.visible = true;
+    if (this.isTorchOn && this.torchFuel > 0) {
+      if (this.torchLight) this.torchLight.intensity = 2.5;
+      if (this.flameMesh) this.flameMesh.visible = true;
+    }
+
+    this.container.requestPointerLock();
+    this.showToast('🌉 Drawbridge lowered! Cross the gorge into the Canyon Ridge.');
     this.completeMission('village_bridge');
+  }
+
+  lowerDrawbridge() {
+    this.startDrawbridgeCutscene();
   }
 
   gatherFood(type) {
@@ -6859,6 +9174,26 @@ class FrostboundGame {
     this.sfx.playPickup();
     this.showToast(`Gathered wild sustenance! (Food: ${this.foodCollected}/3, Water: ${this.hasWater ? '✓' : '✗'})`);
     this.checkMeadowSustenance();
+  }
+
+  catchFish() {
+    this.sfx.playWaterSplash();
+    this.sfx.playPickup();
+    this.addItem({ id: 'trout', name: 'Glacial River Trout', icon: '🐟', count: 2 });
+    this.hunger = Math.min(100, this.hunger + 30);
+    this.health = Math.min(100, this.health + 10);
+    this.showToast('🎣 Reeled in fresh Glacial River Trout! (+30 Hunger, +10 Health)');
+    this.gatherFood('fish');
+  }
+
+  harvestResin(mesh, light) {
+    this.sfx.playPickup();
+    this.addItem({ id: 'pine_resin', name: 'Golden Pine Resin', icon: '✨', count: 2 });
+    this.torchFuel = Math.min(100, this.torchFuel + 45);
+    if (this.torchLight) this.torchLight.intensity = Math.max(this.torchLight.intensity, 2.5);
+    if (mesh) mesh.visible = false;
+    if (light) light.intensity = 0;
+    this.showToast('✨ Harvested Golden Pine Resin! Torch refueled (+45% Fuel).');
   }
 
   collectWater() {
@@ -7351,9 +9686,11 @@ class FrostboundGame {
       }
 
       // Cinematic & Cutscene Skip handler (Space, Esc, Enter)
-      if (this.isIntroPanning || this.isTrailerMode || this.isSUVIntro) {
+      if (this.isIntroPanning || this.isTrailerMode || this.isSUVIntro || this.isVillageIntro || this.isDrawbridgeCutscene) {
         if (e.code === 'Space' || e.code === 'Escape' || e.code === 'Enter') {
           e.preventDefault();
+          if (this.isDrawbridgeCutscene) this.endDrawbridgeCutscene();
+          if (this.isVillageIntro) this.endVillageIntroCutscene();
           if (this.isIntroPanning) this.endIntroCameraPan();
           if (this.isTrailerMode) this.stopTrailerMode();
           if (this.isSUVIntro) this.exitSUV();
@@ -7392,8 +9729,16 @@ class FrostboundGame {
       if (e.code === 'KeyZ') {
         this.checkSleepNearFire();
       }
+      if (e.code === 'KeyC') {
+        e.preventDefault();
+        this.craftCampfire();
+      }
       if (e.code === 'KeyE') {
-        if (this.isSUVIntro) {
+        if (this.isDrawbridgeCutscene) {
+          this.endDrawbridgeCutscene();
+        } else if (this.isVillageIntro) {
+          this.endVillageIntroCutscene();
+        } else if (this.isSUVIntro) {
           this.exitSUV();
         } else {
           this.tryInteract();
@@ -7406,20 +9751,20 @@ class FrostboundGame {
     });
 
     this.container.addEventListener('click', () => {
-      if (this.isPlaying && !this.isBackpackOpen && !this.isMapOpen && !this.isIntroPanning && !this.isTrailerMode) {
+      if (this.isPlaying && !this.isBackpackOpen && !this.isMapOpen && !this.isIntroPanning && !this.isTrailerMode && !this.isVillageIntro && !this.isDrawbridgeCutscene) {
         this.container.requestPointerLock();
         this.sfx.init();
       }
     });
 
     window.addEventListener('mousedown', (e) => {
-      if (e.button === 0 && this.isPlaying && !this.isBackpackOpen && !this.isMapOpen && !this.isIntroPanning && !this.isTrailerMode) {
+      if (e.button === 0 && this.isPlaying && !this.isBackpackOpen && !this.isMapOpen && !this.isIntroPanning && !this.isTrailerMode && !this.isVillageIntro && !this.isDrawbridgeCutscene) {
         this.performAttack();
       }
     });
 
     document.addEventListener('mousemove', (e) => {
-      if (document.pointerLockElement === this.container && !this.isIntroPanning && !this.isTrailerMode) {
+      if (document.pointerLockElement === this.container && !this.isIntroPanning && !this.isTrailerMode && !this.isVillageIntro && !this.isDrawbridgeCutscene) {
         const sensitivity = 0.0020;
         this.cameraYaw -= e.movementX * sensitivity;
         this.cameraPitch -= e.movementY * sensitivity;
@@ -7440,9 +9785,16 @@ class FrostboundGame {
       btnTrailer.addEventListener('click', () => this.startTrailerMode());
     }
 
+    const btnHudTrailer = document.getElementById('btn-hud-trailer');
+    if (btnHudTrailer) {
+      btnHudTrailer.addEventListener('click', () => this.startTrailerMode());
+    }
+
     const cinematicSkip = document.getElementById('cinematic-skip');
     if (cinematicSkip) {
       cinematicSkip.addEventListener('click', () => {
+        if (this.isDrawbridgeCutscene) this.endDrawbridgeCutscene();
+        if (this.isVillageIntro) this.endVillageIntroCutscene();
         if (this.isIntroPanning) this.endIntroCameraPan();
         if (this.isSUVIntro) this.exitSUV();
         if (this.isTrailerMode) this.stopTrailerMode();
@@ -7517,7 +9869,7 @@ class FrostboundGame {
     if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => {});
     }
-    this.startSUVIntroCutscene();
+    this.startVillageIntroCutscene();
   }
 
   toggleTorch() {
@@ -7531,8 +9883,9 @@ class FrostboundGame {
     if (this.fpArms) {
       this.fpArms.setHeldItem('torch');
     }
-    this.torchLight.intensity = this.isTorchOn ? 2.5 : 0;
-    this.flameMesh.visible = this.isTorchOn;
+    if (this.torchLight) this.torchLight.intensity = this.isTorchOn ? 4.8 : 0;
+    if (this.worldTorchLight) this.worldTorchLight.intensity = this.isTorchOn ? 4.8 : 0;
+    if (this.flameMesh) this.flameMesh.visible = this.isTorchOn;
     document.getElementById('active-tool-icon').textContent = this.isTorchOn ? '🔦' : '🌑';
     document.getElementById('active-tool-name').textContent = this.isTorchOn ? 'Torched Pine' : 'Unlit Branch';
   }
@@ -7628,6 +9981,10 @@ class FrostboundGame {
       this.torchFuel = 100;
       this.consumeItem(item.id, 1);
       this.showToast('Refueled Torch Flame to 100%!');
+    } else if (item.id === 'campfire_kit') {
+      this.toggleBackpack();
+      this.craftCampfire();
+      return;
     }
     this.renderBackpackGrid();
     this.updateHUD();
@@ -7675,43 +10032,77 @@ class FrostboundGame {
   }
 
   craftCampfire() {
+    const kit = this.inventory.find(i => i.id === 'campfire_kit');
     const wood = this.inventory.find(i => i.id === 'wood');
-    if (wood && wood.count >= 3) {
+
+    if (kit && kit.count > 0) {
+      this.consumeItem('campfire_kit', 1);
+    } else if (wood && wood.count >= 3) {
       this.consumeItem('wood', 3);
-      const campPos = this.player.position.clone().add(new THREE.Vector3(0, 0, -1.8));
-      campPos.y = getTerrainHeight(campPos.x, campPos.z);
-
-      const fireLight = new THREE.PointLight(0xff6600, 3.5, 14, 1.5);
-      fireLight.position.set(campPos.x, campPos.y + 0.8, campPos.z);
-      this.scene.add(fireLight);
-
-      const logsGeom = new THREE.CylinderGeometry(0.12, 0.15, 1.2, 5);
-      const logsMat = new THREE.MeshStandardMaterial({ color: 0x221307 });
-      for (let i = 0; i < 3; i++) {
-        const logMesh = new THREE.Mesh(logsGeom, logsMat);
-        logMesh.position.set(campPos.x, campPos.y + 0.1, campPos.z);
-        logMesh.rotation.y = (i * Math.PI) / 3;
-        logMesh.rotation.z = Math.PI / 2;
-        this.scene.add(logMesh);
-      }
-
-      const fireParticles = new FlameParticleSystem(this.scene, 28, 0.4, 1.4, 0.24);
-      this.campfires.push({
-        pos: campPos,
-        light: fireLight,
-        timeRemaining: 180,
-        flameParticles: fireParticles
-      });
-      this.sfx.playTorchIgnite();
-      this.showToast('Campfire built! Stand close for Warmth & Sleep.');
-      const mFirstNight = this.missions.find(m => m.id === 'first_night');
-      if (mFirstNight && !mFirstNight.completed) {
-        this.completeMission('first_night');
-      }
-      this.renderBackpackGrid();
     } else {
-      this.showToast('Need 3x Pine Wood to build a Campfire!');
+      this.showToast('Need a Camping Kit or 3x Pine Wood to deploy Campfire!');
+      return;
     }
+
+    // Spawn directly in front of the player
+    const campPos = this.player.position.clone().add(new THREE.Vector3(0, 0, -2.0));
+    campPos.y = getTerrainHeight(campPos.x, campPos.z);
+
+    // Warm high-intensity shadow-casting point light
+    const fireLight = new THREE.PointLight(0xff6a14, 4.2, 18, 1.6);
+    fireLight.position.set(campPos.x, campPos.y + 0.9, campPos.z);
+    fireLight.castShadow = true;
+    fireLight.shadow.bias = -0.002;
+    this.scene.add(fireLight);
+
+    // Protective stone circle around the fire pit
+    const stoneGeom = new THREE.DodecahedronGeometry(0.18, 0);
+    const stoneMat = new THREE.MeshStandardMaterial({ color: 0x52525b, roughness: 0.92 });
+    for (let s = 0; s < 8; s++) {
+      const ang = (s / 8) * Math.PI * 2;
+      const sm = new THREE.Mesh(stoneGeom, stoneMat);
+      sm.position.set(campPos.x + Math.cos(ang) * 0.75, campPos.y + 0.1, campPos.z + Math.sin(ang) * 0.75);
+      sm.scale.set(1.2, 0.8, 1.2);
+      sm.castShadow = true;
+      this.scene.add(sm);
+    }
+
+    // Heavy crossed timber logs in the hearth
+    const logsGeom = new THREE.CylinderGeometry(0.12, 0.15, 1.2, 6);
+    const logsMat = new THREE.MeshStandardMaterial({ color: 0x271911, roughness: 0.95 });
+    for (let i = 0; i < 4; i++) {
+      const logMesh = new THREE.Mesh(logsGeom, logsMat);
+      logMesh.position.set(campPos.x, campPos.y + 0.14, campPos.z);
+      logMesh.rotation.y = (i * Math.PI) / 4;
+      logMesh.rotation.z = Math.PI / 2;
+      logMesh.castShadow = true;
+      this.scene.add(logMesh);
+    }
+
+    // Realistic flame & ember particle system with soft circular gradient
+    const fireParticles = new FlameParticleSystem(this.scene, 32, 0.45, 1.5, 0.26);
+
+    // Subtle amber safe-zone ember clock ground ring
+    const ringMesh = this.createLightRing(12.0, 0xff6622, 0.38);
+    ringMesh.position.set(campPos.x, campPos.y + 0.08, campPos.z);
+    this.scene.add(ringMesh);
+
+    this.campfires.push({
+      pos: campPos,
+      light: fireLight,
+      timeRemaining: 240, // 4 full minutes of warm safe zone
+      flameParticles: fireParticles,
+      ringMesh: ringMesh
+    });
+
+    this.sfx.playTorchIgnite();
+    this.showToast('🏕️ Camping Fire deployed! Stand close for Warmth & Sleep [Z].');
+    const mFirstNight = this.missions.find(m => m.id === 'first_night');
+    if (mFirstNight && !mFirstNight.completed) {
+      this.completeMission('first_night');
+    }
+    this.renderBackpackGrid();
+    this.updateHUD();
   }
 
   checkSleepNearFire() {
@@ -8027,23 +10418,258 @@ class FrostboundGame {
   }
 
   startTrailerMode() {
+    this.isDead = false;
+    this.health = 100;
+    this.warmth = 100;
+    this.hunger = 100;
     this.isTrailerMode = true;
     this.trailerStartTime = performance.now();
-    this.trailerDuration = 60.0;
+    this.trailerDuration = 180.0; // Full 3-minute cinematic tour for promo recording
+    this.currentCinematicTitle = '';
+    this.cinematicTextShowTime = 0;
+    this.trailerIntroPlayed = false;
+    this.trailerEndPlayed = false;
     this.sfx.init();
     this.sfx.stopTitleAmbience();
     if (document.pointerLockElement) document.exitPointerLock();
 
-    document.getElementById('main-menu').classList.add('hidden');
-    document.getElementById('controls-modal').classList.add('hidden');
-    document.getElementById('hud').classList.remove('hidden');
+    const mainMenu = document.getElementById('main-menu');
+    if (mainMenu) mainMenu.classList.add('hidden');
+    const controlsModal = document.getElementById('controls-modal');
+    if (controlsModal) controlsModal.classList.add('hidden');
+    const gameOverScreen = document.getElementById('game-over-screen');
+    if (gameOverScreen) gameOverScreen.classList.add('hidden');
+    const victoryScreen = document.getElementById('victory-screen');
+    if (victoryScreen) victoryScreen.classList.add('hidden');
+
+    // Hide cluttered HUD elements during trailer for pristine video capture
+    const hud = document.getElementById('hud');
+    if (hud) hud.classList.add('hidden');
     const overlay = document.getElementById('cinematic-overlay');
     if (overlay) overlay.classList.remove('hidden');
+
+    // Hide 1st-person arms and held torch/stick so drone and cinematic camera views are 100% clean
+    if (this.fpArms) {
+      this.fpArms.root.visible = false;
+    }
+
+    // Setup and trigger User Voiceover 1 (trailer_intro.wav: 26.56s)
+    try {
+      if (!this.trailerIntroAudio) {
+        this.trailerIntroAudio = new Audio('./assets/audio/trailer_intro.wav');
+        this.trailerIntroAudio.volume = 1.0;
+      }
+      this.trailerIntroAudio.currentTime = 0;
+      const playPromise = this.trailerIntroAudio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(err => {
+          console.log('[Trailer Audio] Audio autoplay waiting for interaction:', err);
+        });
+      }
+      this.trailerIntroPlayed = true;
+    } catch (e) {
+      console.warn('[Trailer Audio] Intro audio error:', e);
+    }
+
+    // Initialize trailer recording controls
+    const recBtn = document.getElementById('btn-trailer-record');
+    if (recBtn && !recBtn.hasTrailerListener) {
+      recBtn.hasTrailerListener = true;
+      recBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.toggleTrailerRecording();
+      });
+    }
+  }
+
+  toggleTrailerRecording() {
+    if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+      this.stopTrailerRecording();
+    } else {
+      this.startTrailerRecording();
+    }
+  }
+
+  startTrailerRecording() {
+    try {
+      const canvas = this.renderer.domElement;
+      const canvasStream = canvas.captureStream(60); // 60 FPS full resolution recording
+
+      // Combine video stream with web audio track if available
+      let combinedStream = canvasStream;
+      if (this.sfx && this.sfx.ctx) {
+        try {
+          const audioDest = this.sfx.ctx.createMediaStreamDestination();
+          const audioTracks = audioDest.stream.getAudioTracks();
+          if (audioTracks.length > 0) {
+            combinedStream = new MediaStream([
+              ...canvasStream.getVideoTracks(),
+              ...audioTracks
+            ]);
+          }
+        } catch (e) {
+          console.warn('[Trailer Record] Could not attach audio track:', e);
+        }
+      }
+
+      // Detect best video format supported by user's browser (prioritizing MP4 formats)
+      let selectedMime = '';
+      let fileExt = 'mp4';
+
+      const mp4Formats = [
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/mp4;codecs=avc1',
+        'video/mp4;codecs=h264',
+        'video/mp4'
+      ];
+      for (const fmt of mp4Formats) {
+        if (MediaRecorder.isTypeSupported(fmt)) {
+          selectedMime = fmt;
+          fileExt = 'mp4';
+          break;
+        }
+      }
+
+      // Fallback to webm if MP4 recording is not natively supported by browser engine
+      if (!selectedMime) {
+        const webmFormats = [
+          'video/webm;codecs=vp9,opus',
+          'video/webm;codecs=vp8,opus',
+          'video/webm;codecs=vp8',
+          'video/webm'
+        ];
+        for (const fmt of webmFormats) {
+          if (MediaRecorder.isTypeSupported(fmt)) {
+            selectedMime = fmt;
+            // Name file as MP4 as requested so media players immediately open it
+            fileExt = 'mp4';
+            break;
+          }
+        }
+      }
+
+      this.recordedChunks = [];
+      const recOptions = { videoBitsPerSecond: 12000000 };
+      if (selectedMime) {
+        recOptions.mimeType = selectedMime;
+      }
+      this.mediaRecorder = new MediaRecorder(combinedStream, recOptions);
+
+      this.mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          this.recordedChunks.push(e.data);
+        }
+      };
+
+      this.mediaRecorder.onstop = () => {
+        const mimeToUse = selectedMime || 'video/mp4';
+        const blob = new Blob(this.recordedChunks, { type: mimeToUse });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.setAttribute('download', `Frostbound_Cinematic_Trailer.${fileExt}`);
+        document.body.appendChild(a);
+        
+        // Dispatch synthetic click for browser download
+        const clickEvent = new MouseEvent('click', {
+          view: window,
+          bubbles: true,
+          cancelable: true
+        });
+        a.dispatchEvent(clickEvent);
+        setTimeout(() => {
+          if (a.parentNode) a.parentNode.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 5000);
+
+        const badge = document.getElementById('trailer-rec-status');
+        if (badge) badge.classList.add('hidden');
+        const recBtn = document.getElementById('btn-trailer-record');
+        if (recBtn) {
+          recBtn.textContent = '🔴 RECORD & SAVE VIDEO';
+          recBtn.style.background = 'linear-gradient(135deg, rgba(220, 38, 38, 0.8), rgba(185, 28, 28, 0.9))';
+        }
+        this.showToast('Cinematic Trailer recording downloaded as MP4!');
+      };
+
+      this.mediaRecorder.start(1000); // 1-second chunks
+      const badge = document.getElementById('trailer-rec-status');
+      if (badge) badge.classList.remove('hidden');
+      const recBtn = document.getElementById('btn-trailer-record');
+      if (recBtn) {
+        recBtn.textContent = '⏹ STOP & DOWNLOAD';
+        recBtn.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+      }
+      this.showToast('Recording started! Click STOP & DOWNLOAD when ready.');
+    } catch (err) {
+      console.warn('[Trailer Record] Could not start MediaRecorder:', err);
+      // Fallback simple recorder without audio
+      try {
+        const canvas = this.renderer.domElement;
+        const canvasStream = canvas.captureStream(30);
+        this.recordedChunks = [];
+        this.mediaRecorder = new MediaRecorder(canvasStream);
+        this.mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) this.recordedChunks.push(e.data);
+        };
+        this.mediaRecorder.onstop = () => {
+          const blob = new Blob(this.recordedChunks, { type: 'video/mp4' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.setAttribute('download', 'Frostbound_Cinematic_Trailer.mp4');
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            if (a.parentNode) a.parentNode.removeChild(a);
+            URL.revokeObjectURL(url);
+          }, 5000);
+          const badge = document.getElementById('trailer-rec-status');
+          if (badge) badge.classList.add('hidden');
+          const recBtn = document.getElementById('btn-trailer-record');
+          if (recBtn) {
+            recBtn.textContent = '🔴 RECORD & SAVE VIDEO';
+            recBtn.style.background = 'linear-gradient(135deg, rgba(220, 38, 38, 0.8), rgba(185, 28, 28, 0.9))';
+          }
+        };
+        this.mediaRecorder.start(1000);
+        const badge = document.getElementById('trailer-rec-status');
+        if (badge) badge.classList.remove('hidden');
+        const recBtn = document.getElementById('btn-trailer-record');
+        if (recBtn) {
+          recBtn.textContent = '⏹ STOP & DOWNLOAD';
+          recBtn.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+        }
+      } catch (e2) {
+        console.error('[Trailer Record] Fallback failed:', e2);
+      }
+    }
+  }
+
+  stopTrailerRecording() {
+    if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+      this.mediaRecorder.stop();
+    }
   }
 
   stopTrailerMode() {
     if (!this.isTrailerMode) return;
     this.isTrailerMode = false;
+
+    // Stop audio
+    if (this.trailerIntroAudio) {
+      this.trailerIntroAudio.pause();
+      this.trailerIntroAudio.currentTime = 0;
+    }
+    if (this.trailerEndAudio) {
+      this.trailerEndAudio.pause();
+      this.trailerEndAudio.currentTime = 0;
+    }
+
+    // Stop recording if active
+    this.stopTrailerRecording();
+
     const overlay = document.getElementById('cinematic-overlay');
     if (overlay) overlay.classList.add('hidden');
 
@@ -8052,6 +10678,10 @@ class FrostboundGame {
       document.getElementById('hud').classList.add('hidden');
       this.sfx.startTitleAmbience();
     } else {
+      document.getElementById('hud').classList.remove('hidden');
+      if (this.fpArms && this.cameraMode === 'first') {
+        this.fpArms.root.visible = true;
+      }
       this.cameraYaw = -0.64;
       this.cameraPitch = 0;
       this.container.requestPointerLock();
@@ -8059,12 +10689,30 @@ class FrostboundGame {
   }
 
   updateCinematicOverlay(tag, title, desc) {
+    const content = document.querySelector('.cinematic-content');
     const elTag = document.getElementById('cinematic-tag');
     const elTitle = document.getElementById('cinematic-title');
     const elDesc = document.getElementById('cinematic-desc');
-    if (elTag && elTag.textContent !== tag) elTag.textContent = tag;
-    if (elTitle && elTitle.textContent !== title) elTitle.textContent = title;
-    if (elDesc && elDesc.textContent !== desc) elDesc.textContent = desc;
+    const now = performance.now();
+
+    if (this.currentCinematicTitle !== title) {
+      this.currentCinematicTitle = title;
+      this.cinematicTextShowTime = now;
+      if (elTag) elTag.textContent = tag;
+      if (elTitle) elTitle.textContent = title;
+      if (elDesc) elDesc.textContent = desc;
+      if (content) content.classList.add('visible');
+    } else {
+      // Auto-fade text after 3.2 seconds so viewers enjoy pure clean scenery!
+      const age = (now - this.cinematicTextShowTime) / 1000;
+      if (content) {
+        if (age > 3.2) {
+          content.classList.remove('visible');
+        } else {
+          content.classList.add('visible');
+        }
+      }
+    }
   }
 
   updateTrailer(delta) {
@@ -8077,107 +10725,229 @@ class FrostboundGame {
     const camPos = new THREE.Vector3();
     const lookTarget = new THREE.Vector3();
 
-    if (elapsed < 20.0) {
+    // -------------------------------------------------------------------------
+    // 180-SECOND CINEMATIC TOUR (6 x 30-second Scenic Story Themes)
+    // -------------------------------------------------------------------------
+
+    if (elapsed < 30.0) {
       // -------------------------------------------------------------
-      // THEME I: DESOLATION & THE FROZEN WILD (0.0s - 20.0s)
+      // ACT I: DAWN BREAKING OVER SOLSTICE VILLAGE (0s - 30s)
+      // Dynamic Sunrise: 05:45 golden dawn -> 07:15 bright morning
+      // First 26.56s voiceover plays during dynamic mountain sunrise & long shadows
       // -------------------------------------------------------------
+      const t = elapsed;
+      const dawnProgress = Math.min(1.0, t / 26.56);
+      this.timeOfDay = 5.65 + dawnProgress * 1.5; // 05:39 to 07:09 (Golden sunrise to bright morning)
+
       this.updateCinematicOverlay(
-        'THEME I: DESOLATION & THE FROZEN WILD',
-        'CRASH IN THE ALPINE SHADOWS',
-        'Bitter sub-zero blizzards, dwindling campfire embers, and ancient wolves stalking the rocky canyon.'
+        'CHAPTER I: SOLSTICE MOUNTAIN VILLAGE',
+        'SANCTUARY OF THE SACRED FLAME • GOLDEN DAWN',
+        'Morning sunlight breaks across snowy summits, stretching long mountain shadows over Solstice.'
       );
 
-      if (elapsed < 7.0) {
-        const u = elapsed / 7.0;
-        const angle = -1.2 + u * 1.5;
-        camPos.set(
-          -180 + Math.cos(angle) * 16,
-          24 + Math.sin(u * Math.PI) * 4,
-          525 + Math.sin(angle) * 16
-        );
-        lookTarget.set(-180, 20.5, 525);
-      } else if (elapsed < 14.0) {
-        const u = (elapsed - 7.0) / 7.0;
-        const p1 = new THREE.Vector3(-150, 25, 490);
-        const p2 = new THREE.Vector3(-90, 23, 410);
-        camPos.lerpVectors(p1, p2, u);
-        lookTarget.set(-95 + Math.sin(u * 2) * 10, 21, 415);
+      if (t < 14.0) {
+        // High majestic drone glide along the mountain ridge overlooking the village
+        // Smooth sine easing for cinematic slow pans
+        const u = Math.sin((t / 14.0) * Math.PI * 0.5);
+        const angle = -0.65 + u * 0.85; // Gentle 48-degree arc, no dizzy spinning
+        const orbitRadius = 48.0;
+        const camX = 160.0 + Math.cos(angle) * orbitRadius;
+        const camZ = 246.0 + Math.sin(angle) * orbitRadius;
+        camPos.set(camX, Math.max(getTerrainHeight(camX, camZ) + 14.0, 34.0 - u * 3.0), camZ);
+        lookTarget.set(162.0, getTerrainHeight(162.0, 246.0) + 2.8, 246.0);
+      } else if (t < 23.0) {
+        // Over-the-shoulder action tracking shot along village stone promenade
+        // Character grounded on stone pathway walking smoothly, dynamic morning shadows stretching ahead
+        const u = (t - 14.0) / 9.0;
+        const playerWalkX = 148.0 + u * 16.0;
+        const playerWalkZ = 256.0 - u * 14.0;
+        const groundY = getTerrainHeight(playerWalkX, playerWalkZ);
+        this.player.position.set(playerWalkX, groundY + 0.08, playerWalkZ);
+        if (this.thirdPersonPlayer) {
+          this.thirdPersonPlayer.setFirstPerson(false);
+          this.thirdPersonPlayer.update(delta, this.player.position, 3.2, true, false, new THREE.Vector3(16.0, 0, -14.0).normalize(), true, 0);
+        }
+        camPos.set(playerWalkX - 3.4, groundY + 2.5, playerWalkZ + 4.5);
+        lookTarget.set(playerWalkX + 2.2, groundY + 1.6, playerWalkZ - 2.8);
       } else {
-        const u = (elapsed - 14.0) / 6.0;
-        const p1 = new THREE.Vector3(-75, 26, 425);
-        const p2 = new THREE.Vector3(-30, 32, 405);
-        camPos.lerpVectors(p1, p2, u);
-        lookTarget.set(-40, 26, 418);
+        // Broad sweeping view down the village stone stairs toward the mountain valley
+        const u = (t - 23.0) / 7.0;
+        const stairX = 144.0 - u * 10.0;
+        const stairZ = 265.0 + u * 12.0;
+        camPos.set(stairX, getTerrainHeight(stairX, stairZ) + 10.0 + u * 2.0, stairZ);
+        lookTarget.set(162.0, getTerrainHeight(162.0, 246.0) + 2.5, 246.0);
       }
-    } else if (elapsed < 40.0) {
+    } else if (elapsed < 60.0) {
       // -------------------------------------------------------------
-      // THEME II: A LIVING, BREATHING ECOSYSTEM (20.0s - 40.0s)
+      // ACT II: THE GORGE DRAWBRIDGE & RIVER RAPIDS (30s - 60s)
+      // Crisp clear daytime (10:30 AM) with sparkling alpine river
       // -------------------------------------------------------------
-      const t = elapsed - 20.0;
+      const t = elapsed - 30.0;
+      this.timeOfDay = 10.5; // Bright sunny morning
       this.updateCinematicOverlay(
-        'THEME II: A LIVING, BREATHING ECOSYSTEM',
-        'WILDLIFE, FLOCKS & GLACIAL RIVERS',
-        'Dynamic deer herds in sunlit clearings, soaring bird flocks, and schooling fish in glacial waters.'
+        'CHAPTER II: THE GORGE CROSSING',
+        'TIMBER DRAWBRIDGE & ROARING RAPIDS',
+        'Sunlight shines down the glacial gorge as the timber drawbridge spans the canyon chasm.'
       );
 
-      if (t < 7.0) {
-        const u = t / 7.0;
-        const angle = 0.5 + u * 1.8;
-        camPos.set(
-          95 + Math.cos(angle) * 18,
-          26 + Math.sin(u * Math.PI) * 3,
-          230 + Math.sin(angle) * 18
-        );
-        lookTarget.set(95, 23.5, 230);
-      } else if (t < 14.0) {
-        const u = (t - 7.0) / 7.0;
-        const p1 = new THREE.Vector3(-15, 20, 130);
-        const p2 = new THREE.Vector3(-32, 18, 55);
-        camPos.lerpVectors(p1, p2, u);
-        lookTarget.set(-25, 14, 90 - u * 35);
+      if (t < 15.0) {
+        // River valley tracking shot looking up along gorge water towards the bridge span
+        const u = Math.sin((t / 15.0) * Math.PI * 0.5);
+        const cx = -162 - u * 12;
+        const cz = 492 + u * 18;
+        camPos.set(cx, Math.max(getTerrainHeight(cx, cz) + 5.0, 2.5 + u * 3.0), cz);
+        lookTarget.set(-176, 5.5, 514);
       } else {
-        const u = (t - 14.0) / 6.0;
-        const p1 = new THREE.Vector3(-45, 24, 45);
-        const p2 = new THREE.Vector3(-12, 22, 10);
+        // High sweeping crane shot above bridge and canyon pass
+        const u = (t - 15.0) / 15.0;
+        const p1 = new THREE.Vector3(-192, 22, 536);
+        const p2 = new THREE.Vector3(-145, 24, 475);
         camPos.lerpVectors(p1, p2, u);
-        lookTarget.set(-25, 16.5, 20);
+        lookTarget.set(-170, 7.5, 505);
+      }
+    } else if (elapsed < 90.0) {
+      // -------------------------------------------------------------
+      // ACT III: CANYON RIDGE & GOLDEN SUNSET (60s - 90s)
+      // Majestic Golden Sunset Alpenglow (17:30 - 18:45)
+      // Short 8s first-person campfire crafting clip followed by sweeping golden ridge
+      // -------------------------------------------------------------
+      const t = elapsed - 60.0;
+      this.timeOfDay = 17.6 + (t / 30.0) * 1.0; // 17:36 to 18:36 (Rich golden hour sunset)
+      this.updateCinematicOverlay(
+        'CHAPTER III: CANYON RIDGE EXPEDITION',
+        'GOLDEN ALPENGLOW & SURVIVAL EMBERS',
+        'Amber sunset bathes the granite crags as travellers kindle warming campfires before dusk.'
+      );
+
+      if (t < 10.0) {
+        // Short first-person survival task clip: Player by campfire in golden sunset light
+        const pCampX = -120.0;
+        const pCampZ = 450.0;
+        const groundY = getTerrainHeight(pCampX, pCampZ);
+        this.player.position.set(pCampX, groundY, pCampZ);
+        camPos.set(pCampX, groundY + 1.62, pCampZ);
+        const u = t / 10.0;
+        // Looking smoothly towards campfire and sunset horizon
+        lookTarget.set(pCampX + Math.cos(-0.4 + u * 0.3) * 6, groundY + 0.9, pCampZ + Math.sin(-0.4 + u * 0.3) * 6);
+      } else {
+        // Sweeping panoramic crane shot above Canyon Ridge pines bathed in amber sunset
+        const u = (t - 10.0) / 20.0;
+        const p1 = new THREE.Vector3(-138, 22, 460);
+        const p2 = new THREE.Vector3(-96, 26, 410);
+        camPos.lerpVectors(p1, p2, u);
+        lookTarget.set(-115, 9.5, 440);
+      }
+    } else if (elapsed < 120.0) {
+      // -------------------------------------------------------------
+      // ACT IV: GLACIAL LAKE & LIVING WILDLIFE (90s - 120s)
+      // Bright crystalline afternoon (13:30)
+      // -------------------------------------------------------------
+      const t = elapsed - 90.0;
+      this.timeOfDay = 13.5; // Pristine clear daytime
+      this.updateCinematicOverlay(
+        'CHAPTER IV: GLACIAL VALLEY & ALPINE MEADOW',
+        'LIVING ECOSYSTEM • SHIMMERING BASIN',
+        'Turquoise glacial ice sheet, herds of wild deer, and the mountain river cascade.'
+      );
+
+      if (t < 15.0) {
+        // Smooth aerial swoop over shimmering frozen lake
+        const u = Math.sin((t / 15.0) * Math.PI * 0.5);
+        const cx = -35 + Math.cos(u * 0.9) * 26;
+        const cz = 40 + Math.sin(u * 0.9) * 26;
+        camPos.set(cx, Math.max(getTerrainHeight(cx, cz) + 7.0, 15 + u * 2.5), cz);
+        lookTarget.set(-35, 5.2, 40);
+      } else {
+        // High meadow tracking shot following wild deer herd grazing
+        const u = (t - 15.0) / 15.0;
+        const p1 = new THREE.Vector3(75, 26, 180);
+        const p2 = new THREE.Vector3(120, 28, 225);
+        camPos.lerpVectors(p1, p2, u);
+        lookTarget.set(95, 17, 210);
+      }
+    } else if (elapsed < 150.0) {
+      // -------------------------------------------------------------
+      // ACT V: HUNTER CAMP & KHAI ROPE SUSPENSION BRIDGE (120s - 150s)
+      // Late golden afternoon (16:30)
+      // -------------------------------------------------------------
+      const t = elapsed - 120.0;
+      this.timeOfDay = 16.5; // Warm afternoon light
+      this.updateCinematicOverlay(
+        'CHAPTER V: KHAI CHASM & ROPE BRIDGE',
+        'TRAVERSING THE ABYSS',
+        'Hunter Camp outpost, spinning windmill, and the swaying rope suspension bridge.'
+      );
+
+      if (t < 15.0) {
+        // Gentle flyby over Hunter Camp workshop and windmill
+        const u = Math.sin((t / 15.0) * Math.PI * 0.5);
+        const angle = -0.4 + u * 0.9;
+        const cx = -70 + Math.cos(angle) * 22;
+        const cz = -235 + Math.sin(angle) * 22;
+        camPos.set(cx, Math.max(getTerrainHeight(cx, cz) + 12.0, 32 + Math.sin(u * Math.PI) * 1.5), cz);
+        lookTarget.set(-70, 22, -235);
+      } else {
+        // Majestic tracking shot alongside swaying rope suspension bridge over deep abyss
+        const u = (t - 15.0) / 15.0;
+        const p1 = new THREE.Vector3(-45, 46, -400);
+        const p2 = new THREE.Vector3(15, 54, -460);
+        camPos.lerpVectors(p1, p2, u);
+        lookTarget.set(-20, 34, -430);
       }
     } else {
       // -------------------------------------------------------------
-      // THEME III: MACHINES OF HOPE & THE FINAL ASCENT (40.0s - 60.0s)
+      // ACT VI: THE SUMMIT RADIO TOWER & RESCUE HELICOPTER (150s - 180s)
+      // Dramatic sunset alpenglow summit (18:45) - rich colors, NOT pitch dark night
+      // Trigger trailer_end.wav (14.12s) at 165s
       // -------------------------------------------------------------
-      const t = elapsed - 40.0;
+      const t = elapsed - 150.0;
+      this.timeOfDay = 18.6; // Dramatic crimson & amber sunset summit (bright silhouettes & glowing rescue searchlights)
+
+      if (elapsed >= 165.0 && !this.trailerEndPlayed) {
+        try {
+          if (!this.trailerEndAudio) {
+            this.trailerEndAudio = new Audio('./assets/audio/trailer_end.wav');
+            this.trailerEndAudio.volume = 1.0;
+          }
+          this.trailerEndAudio.currentTime = 0;
+          const playPromise = this.trailerEndAudio.play();
+          if (playPromise !== undefined) {
+            playPromise.catch(err => console.log('[Trailer Audio] End audio waiting:', err));
+          }
+          this.trailerEndPlayed = true;
+        } catch (e) {
+          console.warn('[Trailer Audio] End audio error:', e);
+        }
+      }
+
       this.updateCinematicOverlay(
-        'THEME III: MACHINES OF HOPE & THE FINAL ASCENT',
-        'REPAIR THE RELAYS • IGNITE THE BEACON',
-        'Roaring camp generator, sheer Khai cliff face with wind turbine, and the Radio Tower summit SOS beacon.'
+        'CHAPTER VI: SUMMIT OF HOPE',
+        'RADIO TOWER SOS & HELICOPTER EXTRACTION',
+        'Igniting the summit rescue beacon as search-and-rescue helicopters arrive over the peaks.'
       );
 
-      if (t < 7.0) {
-        const u = t / 7.0;
-        const angle = -0.8 + u * 2.0;
-        camPos.set(
-          -70 + Math.cos(angle) * 16,
-          27 + Math.sin(u * Math.PI) * 2.5,
-          -235 + Math.sin(angle) * 16
-        );
-        lookTarget.set(-70, 24, -235);
-      } else if (t < 13.0) {
-        const u = (t - 7.0) / 6.0;
-        const p1 = new THREE.Vector3(10, 42, -380);
-        const p2 = new THREE.Vector3(35, 54, -435);
-        camPos.lerpVectors(p1, p2, u);
-        lookTarget.set(25, 46, -420);
+      if (t < 15.0) {
+        // Slow majestic ascending crane shot framing the Radio Tower beacon and helicopter
+        const u = Math.sin((t / 15.0) * Math.PI * 0.5);
+        const angle = -0.3 + u * 1.2; // Gentle slow arc
+        const cx = Math.cos(angle) * 30;
+        const cz = -560 + Math.sin(angle) * 30;
+        camPos.set(cx, Math.max(getTerrainHeight(cx, cz) + 8.0, 56 + u * 35), cz);
+        lookTarget.set(0, 75, -560);
       } else {
-        const u = (t - 13.0) / 7.0;
-        const angle = u * Math.PI * 1.6;
-        camPos.set(
-          Math.cos(angle) * 22,
-          86 + u * 6,
-          -550 + Math.sin(angle) * 22
-        );
-        lookTarget.set(0, 85, -550);
+        // Epic wide vista shot framing the entire mountain descent, rescue helicopter, and sky
+        const u = (t - 15.0) / 15.0;
+        const p1 = new THREE.Vector3(-42, 102, -532);
+        const p2 = new THREE.Vector3(45, 112, -500);
+        camPos.lerpVectors(p1, p2, u);
+        lookTarget.set(0, 75, -560);
       }
+    }
+
+    // Safety: enforce minimum height clearance above terrain to prevent clipping
+    const groundElevation = getTerrainHeight(camPos.x, camPos.z);
+    if (camPos.y < groundElevation + 2.2) {
+      camPos.y = groundElevation + 2.2;
     }
 
     this.camera.position.copy(camPos);
@@ -8197,34 +10967,42 @@ class FrostboundGame {
     this.updateSkyByTimeOfDay();
     const isNight = this.timeOfDay < 6 || this.timeOfDay > 18;
 
-    // Sun / Moon trajectory centered around player
-    // Sun trajectory centered around player, framed majestically ahead over the mountain vista
-    const sunAngle = ((this.timeOfDay - 6) / 12) * Math.PI;
-    const sunDist = 380;
-    const sunElevation = Math.max(32, Math.sin(sunAngle) * 95);
-    this.sunLight.position.set(
-      this.player.position.x + 110,
-      this.player.position.y + sunElevation,
-      this.player.position.z - 280
-    );
-    this.sunLight.target.position.copy(this.player.position);
+    // =========================================================================
+    // DYNAMIC MINECRAFT/AAA CELESTIAL ORBIT (Sun, Moon, Stars, Sunset Alpenglow)
+    // =========================================================================
+    // Celestial angle: 0h = midnight, 6h = sunrise (East +X), 12h = noon (+Y overhead), 18h = sunset (West -X), 24h = midnight
+    const celestialAngle = ((this.timeOfDay - 6) / 24) * Math.PI * 2;
+    const celestialRadius = 450;
+    const sunX = Math.cos(celestialAngle) * celestialRadius;
+    const sunY = Math.sin(celestialAngle) * celestialRadius;
+    const sunZ = Math.sin(celestialAngle * 0.5) * 80 - 60; // Slightly tilted northern trajectory
+
+    // Sun & Directional Shadow position follows active focus point
+    // In trailer mode, follow camera position so the entire drone landscape is covered by shadows
+    const shadowFocus = this.isTrailerMode ? this.camera.position : this.player.position;
+    if (this.sunGroup) {
+      this.sunGroup.position.set(shadowFocus.x + sunX, shadowFocus.y + sunY, shadowFocus.z + sunZ);
+      this.sunGroup.visible = (sunY > -60);
+    }
+    // Directional sunlight casting shadows from sun's actual angle
+    this.sunLight.position.set(shadowFocus.x + sunX, shadowFocus.y + Math.max(15, sunY), shadowFocus.z + sunZ);
+    this.sunLight.target.position.copy(shadowFocus);
     this.sunLight.target.updateMatrixWorld();
 
-    if (this.sunGroup) {
-      this.sunGroup.position.copy(this.sunLight.position);
-      if (this.sunCoronaSprite) {
-        this.sunCoronaSprite.lookAt(this.camera.position);
-        this.sunCoronaSprite.rotation.z += delta * 0.03;
-      }
-    } else if (this.sunOrb) {
-      this.sunOrb.position.copy(this.sunLight.position);
+    // Moon Position directly opposite to Sun
+    if (this.moonGroup) {
+      this.moonGroup.position.set(pPos.x - sunX, pPos.y - sunY, pPos.z - sunZ);
+      this.moonGroup.visible = (-sunY > -60);
     }
 
     if (this.skyMesh) {
-      this.skyMesh.position.copy(this.player.position);
+      this.skyMesh.position.copy(pPos);
+    }
+    if (this.starPoints) {
+      this.starPoints.position.copy(pPos);
+      this.starPoints.rotation.y += delta * 0.005; // Gentle majestic cosmic rotation
     }
 
-    // Dynamic Sky Colors
     // 5-Zone Atmospheric Fog Tint & Density Transitions
     const pz = this.player.position.z;
     const fogColorZ1 = new THREE.Color(0x7e8f9e); // Zone 1: Slate Crash Site
@@ -8257,58 +11035,62 @@ class FrostboundGame {
       targetFogDensity = 0.0033 * (1 - t) + 0.0026 * t;
     }
 
-    // Soft Sunset Color Grading (peaks around 17:30)
-    const isSunset = (this.timeOfDay >= 16.0 && this.timeOfDay <= 19.5);
-    const isSunrise = (this.timeOfDay >= 5.0 && this.timeOfDay <= 8.0);
-    let sunsetBlend = 0;
+    // Majestic Minecraft/AAA Golden Sunset (17:00 - 19:30) & Sunrise (05:00 - 07:30)
+    const isSunset = (this.timeOfDay >= 16.5 && this.timeOfDay <= 19.5);
+    const isSunrise = (this.timeOfDay >= 5.0 && this.timeOfDay <= 7.5);
+    let sunsetFactor = 0;
     if (isSunset) {
-      sunsetBlend = Math.sin(((this.timeOfDay - 16.0) / 3.5) * Math.PI);
+      sunsetFactor = Math.sin(((this.timeOfDay - 16.5) / 3.0) * Math.PI);
     } else if (isSunrise) {
-      sunsetBlend = Math.sin(((this.timeOfDay - 5.0) / 3.0) * Math.PI);
+      sunsetFactor = Math.sin(((this.timeOfDay - 5.0) / 2.5) * Math.PI);
     }
 
     if (isNight) {
-      const nightFog = new THREE.Color(0x0a121e);
-      if (this.scene.background && this.scene.background.isColor) this.scene.background.setHex(0x0a121e);
+      // Crisp Dark Starry Night
+      const nightSky = new THREE.Color(0x02050b);
+      const nightFog = new THREE.Color(0x040812);
+      if (this.scene.background && this.scene.background.isColor) this.scene.background.copy(nightFog);
       this.scene.fog.color.copy(nightFog);
-      this.skyMesh.material.color.setHex(0x08101a);
-      this.sunOrb.material.color.setHex(0xd0e8ff); // Moon glow
-      if (this.sunCoronaSprite) this.sunCoronaSprite.visible = false;
-      this.ambientLight.intensity = 0.25;
-      if (this.hemiLight) this.hemiLight.intensity = 0.15;
-      this.sunLight.intensity = 0.15;
-      this.scene.fog.density = targetFogDensity * 1.25;
+      this.skyMesh.material.color.copy(nightSky);
+      if (this.starMat) this.starMat.opacity = Math.min(0.95, this.starMat.opacity + delta * 1.5);
+      this.ambientLight.intensity = 0.05;
+      if (this.hemiLight) this.hemiLight.intensity = 0.03;
+      this.sunLight.intensity = 0.06;
+      this.sunLight.color.setHex(0x93c5fd); // Faint bluish moonlight
+      this.scene.fog.density = targetFogDensity * 1.35;
     } else {
-      const dayFactor = Math.sin(sunAngle);
-      if (this.sunCoronaSprite) this.sunCoronaSprite.visible = true;
+      // Fade out stars during day
+      if (this.starMat) this.starMat.opacity = Math.max(0.0, this.starMat.opacity - delta * 2.0);
 
-      if (sunsetBlend > 0.02) {
-        // Soft sunset color grading: warm dusty mauve/peach fog and golden amber lighting
-        const sunsetFog = new THREE.Color(0x6e5262); // Soft sunset mauve
-        const sunsetSky = new THREE.Color(0x7c5a6d); // Warm twilight sky
-        const finalFog = targetFogColor.clone().lerp(sunsetFog, sunsetBlend * 0.82);
-        if (this.scene.background && this.scene.background.isColor) this.scene.background.copy(finalFog);
-        this.scene.fog.color.copy(finalFog);
-        this.scene.fog.density = targetFogDensity * (1.0 - sunsetBlend * 0.08);
-        this.skyMesh.material.color.copy(sunsetSky);
+      if (sunsetFactor > 0.05) {
+        // Dramatic Blazing Sunset / Dawn Alpenglow (Crimson, Amber, Purple Sky)
+        const sunsetSkyColor = new THREE.Color(0xd95328).lerp(new THREE.Color(0x4c1d95), 1.0 - sunsetFactor);
+        const sunsetFogColor = new THREE.Color(0xb44322).lerp(new THREE.Color(0x2d1b4e), 1.0 - sunsetFactor);
+        if (this.scene.background && this.scene.background.isColor) this.scene.background.copy(sunsetFogColor);
+        this.scene.fog.color.copy(sunsetFogColor);
+        this.skyMesh.material.color.copy(sunsetSkyColor);
 
-        this.sunOrb.material.color.setHex(0xfffaea);
-        this.sunLight.color.setHex(0xffa153); // Warm golden sunset directional light
-        this.ambientLight.color.setHex(0x5c546c); // Twilight fill light
-        this.ambientLight.intensity = 0.65;
-        this.sunLight.intensity = Math.max(0.6, dayFactor * 1.85);
+        // Blazing sun orb and warm fiery horizon
+        this.sunOrb.material.color.setHex(0xff7700);
+        if (this.sunGlow) this.sunGlow.material.color.setHex(0xff3300);
+        this.sunLight.color.setHex(0xff7722);
+        this.sunLight.intensity = Math.max(1.4, sunsetFactor * 2.8);
+        this.ambientLight.color.setHex(0x52271e);
+        this.ambientLight.intensity = 0.28; // Lower ambient so directional shadows stand out with rich contrast
       } else {
+        // Crisp, radiant clear mountain day
         if (this.scene.background && this.scene.background.isColor) this.scene.background.copy(targetFogColor);
         this.scene.fog.color.copy(targetFogColor);
-        this.scene.fog.density = targetFogDensity;
-        this.skyMesh.material.color.copy(targetFogColor).offsetHSL(0.02, 0.05, 0.05);
-        this.sunOrb.material.color.setHex(0xfffae0);
-        this.sunLight.color.setHex(0xfff5e0);
-        this.ambientLight.color.setHex(0x7590b0);
-        this.ambientLight.intensity = 0.72;
-        this.sunLight.intensity = Math.max(0.4, dayFactor * 1.6);
+        this.skyMesh.material.color.setHex(0x38bdf8); // Vibrant alpine azure
+        this.sunOrb.material.color.setHex(0xfffff0);
+        if (this.sunGlow) this.sunGlow.material.color.setHex(0xffe066);
+        this.sunLight.color.setHex(0xfffaea);
+        this.sunLight.intensity = 1.65;
+        this.ambientLight.color.setHex(0x5a6d80);
+        this.ambientLight.intensity = 0.35; // Distinct, deep sun shadows
       }
     }
+
 
     // Hunter Camp Windmill Rotation
     if (this.windmillBlades) {
@@ -8358,44 +11140,27 @@ class FrostboundGame {
     if (this.isTorchOn && this.torchFuel > 0) {
       this.torchFuel = Math.max(0, this.torchFuel - delta * 0.35);
 
-      // Multi-harmonic realistic flame flicker
-      const tf = Math.sin(timeSec * 24) * 0.35 + Math.sin(timeSec * 41) * 0.2 + Math.sin(timeSec * 13) * 0.25;
-      this.torchLight.intensity = Math.max(1.5, 2.8 + tf);
+      // Multi-harmonic realistic flame flicker for torch light
+      const tf = Math.sin(timeSec * 24) * 0.45 + Math.sin(timeSec * 41) * 0.25 + Math.sin(timeSec * 13) * 0.3;
+      const targetIntensity = Math.max(3.2, 4.8 + tf);
+      if (this.torchLight) this.torchLight.intensity = targetIntensity;
+      if (this.worldTorchLight) this.worldTorchLight.intensity = targetIntensity;
 
       if (this.flameMesh) {
         this.flameMesh.visible = true;
-        this.flameMesh.scale.set(
-          1 + Math.sin(timeSec * 22) * 0.18,
-          1 + Math.sin(timeSec * 35) * 0.28,
-          1 + Math.sin(timeSec * 18) * 0.18
-        );
       }
 
       if (this.torchFlameParticles) {
-        const flameWorldPos = new THREE.Vector3();
-        this.flameMesh.getWorldPosition(flameWorldPos);
-        this.torchFlameParticles.update(delta, flameWorldPos, true);
+        this.torchFlameParticles.points.visible = false;
       }
 
       if (this.torchFuel <= 0) this.toggleTorch();
     } else {
-      this.torchLight.intensity = 0;
+      if (this.torchLight) this.torchLight.intensity = 0;
+      if (this.worldTorchLight) this.worldTorchLight.intensity = 0;
       if (this.flameMesh) this.flameMesh.visible = false;
       if (this.torchFlameParticles) {
-        this.torchFlameParticles.update(delta, this.player.position, false);
-      }
-    }
-
-    // Ember Clock: Torch Light Radius Ring (14m radius)
-    if (this.torchLightRing) {
-      if (this.isTorchOn && this.torchFuel > 0) {
-        this.torchLightRing.visible = true;
-        const px = this.player.position.x;
-        const pz = this.player.position.z;
-        const py = getTerrainHeight(px, pz) + 0.08;
-        this.torchLightRing.position.set(px, py, pz);
-      } else {
-        this.torchLightRing.visible = false;
+        this.torchFlameParticles.points.visible = false;
       }
     }
 
@@ -8431,32 +11196,57 @@ class FrostboundGame {
 
     // COLD DRAIN & SAFE ZONES
     // Day is survivable (0.25/s); Night is deadly without fire (4.5/s)
-    let baseColdDrain = isNight ? 4.5 : 0.25;
-    if (this.weather === 'blizzard') baseColdDrain *= 1.8;
+    if (!this.isTrailerMode) {
+      let baseColdDrain = isNight ? 4.5 : 0.25;
+      if (this.weather === 'blizzard') baseColdDrain *= 1.8;
 
-    if (isNearFire) {
-      // Safe Zone: Campfire rapidly restores warmth
-      this.warmth = Math.min(100, this.warmth + delta * 6.5);
-    } else if (this.isTorchOn && this.torchFuel > 0) {
-      // Safe Zone: Torch protects completely against the deadly night freeze
-      this.warmth = Math.max(0, this.warmth - delta * (isNight ? 0.12 : 0.04));
-    } else {
-      // Outside safe zones: rapid freezing at night, mild drain during day
-      this.warmth = Math.max(0, this.warmth - delta * baseColdDrain);
+      if (isNearFire) {
+        // Safe Zone: Campfire rapidly restores warmth
+        this.warmth = Math.min(100, this.warmth + delta * 6.5);
+      } else if (this.isTorchOn && this.torchFuel > 0) {
+        // Safe Zone: Torch protects completely against the deadly night freeze
+        this.warmth = Math.max(0, this.warmth - delta * (isNight ? 0.12 : 0.04));
+      } else {
+        // Outside safe zones: rapid freezing at night, mild drain during day
+        this.warmth = Math.max(0, this.warmth - delta * baseColdDrain);
+      }
+
+      const frostOverlay = document.getElementById('frost-overlay');
+      if (frostOverlay) {
+        frostOverlay.style.boxShadow = `inset 0 0 ${Math.max(0, (100 - this.warmth) * 1.6)}px rgba(56, 189, 248, ${Math.max(0, (100 - this.warmth) / 110)})`;
+      }
+
+      this.hunger = Math.max(0, this.hunger - delta * 0.3);
+
+      if (this.warmth <= 0 || this.hunger <= 0) {
+        this.health = Math.max(0, this.health - delta * 2.5);
+        if (Math.random() < 0.05) this.triggerDamageFlash('rgba(56, 189, 248, 0.45)', 0.35);
+      }
+
+      if (this.health <= 0) {
+        this.triggerGameOver('Hypothermia and starvation overcame your body in the snow.');
+      }
     }
 
-    const frostOverlay = document.getElementById('frost-overlay');
-    frostOverlay.style.boxShadow = `inset 0 0 ${Math.max(0, (100 - this.warmth) * 1.6)}px rgba(56, 189, 248, ${Math.max(0, (100 - this.warmth) / 110)})`;
-
-    this.hunger = Math.max(0, this.hunger - delta * 0.3);
-
-    if (this.warmth <= 0 || this.hunger <= 0) {
-      this.health = Math.max(0, this.health - delta * 2.5);
-      if (Math.random() < 0.05) this.triggerDamageFlash('rgba(56, 189, 248, 0.45)', 0.35);
+    // Handle Village Intro Cinematic Cutscene
+    if (this.isVillageIntro) {
+      this.updateVillageIntroCutscene(delta);
+      if (this.elderKaelen) this.elderKaelen.update(delta, this.camera.position);
+      this.updateSnow(delta);
+      this.updateMachines(delta);
+      this.updateHUD();
+      this.sfx.updateAmbient(this.camera.position, this.camera.position.y, this.timeOfDay);
+      return;
     }
 
-    if (this.health <= 0) {
-      this.triggerGameOver('Hypothermia and starvation overcame your body in the snow.');
+    // Handle Drawbridge Lowering Cinematic Cutscene
+    if (this.isDrawbridgeCutscene) {
+      this.updateDrawbridgeCutscene(delta);
+      this.updateSnow(delta);
+      this.updateMachines(delta);
+      this.updateHUD();
+      this.sfx.updateAmbient(this.camera.position, this.camera.position.y, this.timeOfDay);
+      return;
     }
 
     // Handle SUV Intro First-Person Cutscene
@@ -8494,6 +11284,7 @@ class FrostboundGame {
       this.updateSnow(delta);
       this.updateMachines(delta);
       if (this.deerHerd) this.deerHerd.update(delta, this.camera.position, false);
+      if (this.horseHerd) this.horseHerd.update(delta);
       if (this.rabbitColony) this.rabbitColony.update(delta, this.camera.position);
       if (this.birdFlocks) this.birdFlocks.update(delta, this.camera.position, false);
       if (this.fishSchool) this.fishSchool.update(delta, this.camera.position);
@@ -8508,16 +11299,64 @@ class FrostboundGame {
     this.updateMinimap();
     this.updateHUD();
 
-    // Living Wildlife State Machines (Deer, Rabbits, Birds, Fish)
+    // Animate Village Relic Visuals (gentle hover bob & rotation with pulsing/blinking light & beacon ring)
+    if (this.villageRelicVisuals && this.villageRelicVisuals.length > 0) {
+      const relicTime = performance.now() * 0.002;
+      this.villageRelicVisuals.forEach(relic => {
+        if (relic.group && relic.group.visible) {
+          relic.group.rotation.y += delta * 1.5;
+          relic.group.position.y = relic.basePosY + Math.sin(relicTime * 2.0) * 0.08;
+          if (relic.light) {
+            // Soft pulsating light hint
+            relic.light.intensity = 1.4 + Math.sin(relicTime * 4.0) * 0.8;
+          }
+          if (relic.beacon && relic.beacon.material) {
+            // Soft pulsing/blinking beacon ring at base
+            const bPulse = 0.3 + 0.3 * Math.sin(relicTime * 4.0);
+            relic.beacon.material.opacity = bPulse;
+            const bScale = 1.0 + 0.1 * Math.sin(relicTime * 4.0);
+            relic.beacon.scale.set(bScale, bScale, bScale);
+          }
+        }
+      });
+    }
+
+    // Living Wildlife State Machines (Deer, Horses, Rabbits, Birds, Fish)
     const isSprinting = (this.keys['ShiftLeft'] || this.keys['ShiftRight']) && this.energy > 10;
+    if (this.elderKaelen) this.elderKaelen.update(delta, this.player.position);
     if (this.deerHerd) this.deerHerd.update(delta, this.player.position, isSprinting);
+    if (this.horseHerd) this.horseHerd.update(delta);
     if (this.rabbitColony) this.rabbitColony.update(delta, this.player.position);
     if (this.birdFlocks) this.birdFlocks.update(delta, this.player.position, isSprinting);
     if (this.fishSchool) this.fishSchool.update(delta, this.player.position);
 
-    // Animated Flowing Water Waves
+    // Animate gorge fish swimming beneath Zone 1 bridge
+    if (this.gorgeFishInst) {
+      const gTime = performance.now() * 0.001;
+      const gDummy = new THREE.Object3D();
+      for (let f = 0; f < 12; f++) {
+        const speed = 0.4 + (f % 4) * 0.15;
+        const angle = (f / 12) * Math.PI * 2 + gTime * speed * 0.25;
+        const radiusX = 3.6 + (f % 3) * 1.4;
+        const radiusZ = 5.8 + (f % 2) * 2.2;
+        const rx = -174.0 + Math.cos(angle) * radiusX;
+        const rz = 514.0 + Math.sin(angle) * radiusZ;
+        const wiggle = Math.sin(gTime * 7.5 + f) * 0.15;
+        gDummy.position.set(rx, -11.2 + Math.sin(gTime * 1.5 + f) * 0.25, rz);
+        gDummy.rotation.y = angle + Math.PI / 2 + wiggle;
+        gDummy.scale.set(0.95, 0.95, 1.25);
+        gDummy.updateMatrix();
+        this.gorgeFishInst.setMatrixAt(f, gDummy.matrix);
+      }
+      this.gorgeFishInst.instanceMatrix.needsUpdate = true;
+    }
+
+    // Animated Flowing Water Waves & Ice Shimmer
     if (this.waterMat && this.waterMat.userData && this.waterMat.userData.customUniforms) {
       this.waterMat.userData.customUniforms.uTime.value += delta;
+    }
+    if (this.iceLakeMat && this.iceLakeMat.userData && this.iceLakeMat.userData.customUniforms) {
+      this.iceLakeMat.userData.customUniforms.uTime.value += delta;
     }
 
     // Grass & Wildflower Wind Sway
@@ -9102,15 +11941,17 @@ class FrostboundGame {
 
   updateSnow(delta = 0.016) {
     if (!this.snowParticles) return;
-    const px = this.player.position.x;
-    const py = this.player.position.y;
-    const pz = this.player.position.z;
+    // Anchor snowfall seamlessly to the camera position for complete 360-degree coverage
+    const anchor = this.camera ? this.camera.position : (this.player ? this.player.position : { x: 0, y: 0, z: 0 });
+    const px = anchor.x;
+    const py = anchor.y;
+    const pz = anchor.z;
 
     const pos = this.snowParticles.geometry.attributes.position;
     const count = pos.count;
-    const wrapRadius = 32.0;
-    const wrapHeightMin = -4.0;
-    const wrapHeightMax = 22.0;
+    const wrapRadius = 40.0;
+    const wrapHeightMin = -5.0;
+    const wrapHeightMax = 20.0;
     const time = performance.now() * 0.001;
 
     for (let i = 0; i < count; i++) {
@@ -9118,25 +11959,25 @@ class FrostboundGame {
       let y = pos.getY(i);
       let z = pos.getZ(i);
 
-      // Light gentle falling + subtle natural drift
+      // Balanced organic omni-directional swirl without directional bias
       const vy = this.snowVelocities[i * 3 + 1];
-      const vx = this.snowVelocities[i * 3] + Math.sin(time + i * 0.2) * 0.14;
-      const vz = this.snowVelocities[i * 3 + 2] + Math.cos(time + i * 0.2) * 0.14;
+      const vx = this.snowVelocities[i * 3] + Math.sin(time * 0.8 + i * 0.17) * 0.12;
+      const vz = this.snowVelocities[i * 3 + 2] + Math.cos(time * 0.8 + i * 0.17) * 0.12;
 
       y += vy * delta;
       x += vx * delta;
       z += vz * delta;
 
-      // Wrap vertically around player's altitude
+      // Wrap vertically relative to camera height
       if (y < py + wrapHeightMin) {
-        y = py + wrapHeightMax;
+        y = py + wrapHeightMax - Math.random() * 2.0;
         x = px + (Math.random() - 0.5) * 2 * wrapRadius;
         z = pz + (Math.random() - 0.5) * 2 * wrapRadius;
       } else if (y > py + wrapHeightMax + 2.0) {
-        y = py + wrapHeightMin;
+        y = py + wrapHeightMin + Math.random() * 2.0;
       }
 
-      // Wrap horizontally around player's X and Z
+      // Wrap horizontally around camera uniformly in all directions
       const dx = x - px;
       const dz = z - pz;
       if (dx > wrapRadius) x -= 2 * wrapRadius;
@@ -9165,6 +12006,117 @@ class FrostboundGame {
 
     document.getElementById('bar-torch').style.width = `${this.torchFuel}%`;
     document.getElementById('val-torch').textContent = `${Math.round(this.torchFuel)}%`;
+
+    // Active Objective Tracker & Navigation Compass Arrow
+    this.updateActiveObjectiveHUD();
+  }
+
+  getActiveObjectiveTarget() {
+    const activeMission = this.missions.find(m => m.active);
+    if (!activeMission) return null;
+
+    let targetCoords = { x: activeMission.coords.x, z: activeMission.coords.z };
+    let title = activeMission.title;
+    let hint = activeMission.desc;
+    let icon = activeMission.icon;
+    let chapter = activeMission.chapter;
+
+    // Sub-objective specificity for dynamic multi-part chapters
+    if (activeMission.id === 'elder_torch') {
+      title = "Speak with Elder Kaelen";
+      hint = "Approach Elder Kaelen by the sacred bonfire and receive the Sacred Torch";
+      targetCoords = { x: 158.0, z: 246.0 };
+    } else if (activeMission.id === 'village_bridge') {
+      if (this.villagePartsCollected < 3) {
+        chapter = `CHAPTER 2 (${this.villagePartsCollected}/3 RELICS)`;
+        // Point to nearest uncollected relic
+        const relics = [
+          { id: 'winch_gear', x: 172.0, z: 235.0, name: 'Winch Gear (Blacksmith)' },
+          { id: 'steel_cable', x: 145.0, z: 235.0, name: 'Steel Cable (Storehouse)' },
+          { id: 'crank_handle', x: 176.0, z: 258.0, name: 'Crank Handle (Tool Shed)' }
+        ];
+        const playerPos = this.player.position;
+        let nearestRelic = null;
+        let nearestDist = Infinity;
+        for (const r of relics) {
+          const hasItem = this.inventory && this.inventory.some(it => it.id === r.id);
+          if (!hasItem) {
+            const d = Math.hypot(r.x - playerPos.x, r.z - playerPos.z);
+            if (d < nearestDist) {
+              nearestDist = d;
+              nearestRelic = r;
+            }
+          }
+        }
+        if (nearestRelic) {
+          targetCoords = { x: nearestRelic.x, z: nearestRelic.z };
+          title = `Find ${nearestRelic.name}`;
+          hint = `Scavenge inside village workshops (${this.villagePartsCollected}/3 relics found)`;
+        }
+      } else {
+        // All 3 collected -> Point directly to Bridge Winch!
+        title = "Operate Drawbridge Winch";
+        hint = "All 3 parts collected! Proceed to the drawbridge winch mechanism to lower bridge";
+        targetCoords = { x: 161.5, z: 247.0 };
+        icon = '🌉';
+      }
+    } else if (activeMission.id === 'first_night') {
+      title = "Survive First Night";
+      hint = "Gather dry pine wood and ignite a campfire before 19:00 dusk deadline";
+      targetCoords = { x: -140.0, z: 460.0 };
+    } else if (activeMission.id === 'meadow_sustenance') {
+      title = "Alpine Sustenance";
+      hint = `Gather food (${Math.min(3, this.foodCollected)}/3) & meltwater (${this.hasWater ? 'DONE' : 'NEEDED'})`;
+      targetCoords = { x: -30.0, z: 25.0 };
+    }
+
+    return { coords: targetCoords, title, hint, icon, chapter };
+  }
+
+  updateActiveObjectiveHUD() {
+    const banner = document.getElementById('active-objective-banner');
+    if (!banner) return;
+
+    const targetInfo = this.getActiveObjectiveTarget();
+    if (!targetInfo) {
+      banner.style.display = 'none';
+      return;
+    }
+    banner.style.display = 'flex';
+
+    // Update Banner Text
+    const elTag = document.getElementById('objective-chapter-tag');
+    if (elTag) elTag.textContent = targetInfo.chapter;
+
+    const elTitle = document.getElementById('objective-title');
+    if (elTitle) elTitle.textContent = targetInfo.title;
+
+    const elHint = document.getElementById('objective-hint');
+    if (elHint) elHint.textContent = targetInfo.hint;
+
+    const elIcon = document.getElementById('objective-icon');
+    if (elIcon) elIcon.textContent = targetInfo.icon;
+
+    // Calculate Distance in meters
+    const playerPos = this.player.position;
+    const dx = targetInfo.coords.x - playerPos.x;
+    const dz = targetInfo.coords.z - playerPos.z;
+    const distMeters = Math.round(Math.hypot(dx, dz));
+
+    const elDist = document.getElementById('objective-distance');
+    if (elDist) elDist.textContent = `📍 ${distMeters}m`;
+
+    // Calculate Relative Direction Angle to target
+    // World angle from player to target (atan2 in X-Z space where -Z is North)
+    const angleToTarget = Math.atan2(dx, -dz);
+    // Relative angle subtracting cameraYaw
+    let relAngle = angleToTarget - this.cameraYaw;
+    const relDeg = (relAngle * 180 / Math.PI);
+
+    const elArrow = document.getElementById('objective-nav-arrow');
+    if (elArrow) {
+      elArrow.style.transform = `rotate(${relDeg}deg)`;
+    }
   }
 
   render() {

@@ -127,6 +127,24 @@
 
   <!-- In-Game HUD -->
   <div id="hud" class="hidden">
+    <!-- Active Mission Objective Banner & Nav Arrow (Top Center) -->
+    <div id="active-objective-banner" class="active-objective-banner glassmorphic-sm">
+      <div class="objective-arrow-disc" id="objective-arrow-disc" title="Objective Direction">
+        <span id="objective-nav-arrow" class="objective-nav-arrow">▲</span>
+      </div>
+      <div class="objective-details">
+        <div class="objective-header-row">
+          <span class="objective-tag" id="objective-chapter-tag">CHAPTER 1</span>
+          <span class="objective-dist-badge" id="objective-distance">📍 0m</span>
+        </div>
+        <div class="objective-title-row">
+          <span class="objective-icon" id="objective-icon">🔥</span>
+          <span class="objective-title" id="objective-title">Speak with Elder Kaelen</span>
+        </div>
+        <div class="objective-hint" id="objective-hint">Approach the sacred bonfire in the village square</div>
+      </div>
+    </div>
+
     <!-- Top Bar: Time, Weather & Tasks (Top-Right) -->
     <div class="hud-top">
       <!-- Ember Clock & Weather Widget -->
@@ -148,6 +166,12 @@
       <div id="btn-toggle-tasks" class="task-prompt-badge glassmorphic-sm" title="Press T to view tasks">
         <span class="task-key">[T]</span>
         <span class="task-prompt-label">OBJECTIVES</span>
+      </div>
+
+      <!-- In-Game Cinematic Showcase Button (For recording promotional video) -->
+      <div id="btn-hud-trailer" class="task-prompt-badge glassmorphic-sm" style="border-color: #f59e0b; color: #f59e0b; cursor: pointer;" title="Play 180s Cinematic Map Showcase Trailer">
+        <span class="task-key">🎬</span>
+        <span class="task-prompt-label" style="color: #fbbf24;">TRAILER</span>
       </div>
 
       <!-- Expedition Mission Tracker Widget (Hidden by default, toggled with T) -->
@@ -232,6 +256,7 @@
       <div class="quick-hints">
         <span class="hint-key">[T]</span> Tasks
         <span class="hint-key">[TAB]</span> Bag
+        <span class="hint-key">[C]</span> Camp
         <span class="hint-key">[V]</span> View
         <span class="hint-key">[Z]</span> Rest
         <span class="hint-key">[L-Click]</span> Attack
@@ -292,7 +317,7 @@
           <h4>CAMP CRAFTING</h4>
           <div class="craft-recipes">
             <button id="btn-craft-torch" class="btn-craft">Craft Torch (2x Wood + 1x Cloth)</button>
-            <button id="btn-craft-campfire" class="btn-craft">Build Campfire (4x Wood + 2x Stone)</button>
+            <button id="btn-craft-campfire" class="btn-craft">Deploy Campfire (1x Camp Kit or 3x Wood) [C]</button>
           </div>
         </div>
         <p class="backpack-close-hint">Press <b>[TAB]</b> or Click to Close</p>
@@ -343,7 +368,12 @@
 
   <!-- Cinematic Letterbox & Trailer Overlay -->
   <div id="cinematic-overlay" class="hidden">
-    <div class="cinematic-bar cinematic-top"></div>
+    <div class="cinematic-bar cinematic-top">
+      <div class="trailer-top-controls">
+        <div id="trailer-rec-status" class="trailer-rec-badge hidden"><span class="rec-dot"></span> REC FULL HD</div>
+        <button id="btn-trailer-record" class="btn-rec-trailer">🔴 RECORD & SAVE VIDEO</button>
+      </div>
+    </div>
     <div class="cinematic-content">
       <div class="cinematic-theme-tag" id="cinematic-tag">THEME I: DESOLATION & THE FROZEN WILD</div>
       <h2 class="cinematic-main-title" id="cinematic-title">THE LONG DESCENT</h2>
