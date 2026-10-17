@@ -6,6 +6,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { Input, Output, Mp4OutputFormat, BufferTarget, BlobSource, ALL_FORMATS, Conversion } from 'mediabunny';
 const heightmapUrl = new URL('./assets/heightmap.png', import.meta.url).href;
 const rockTexUrl = new URL('./assets/rock_color.jpg', import.meta.url).href;
 
@@ -9859,17 +9860,54 @@ class FrostboundGame {
 
   startGame() {
     this.isPlaying = true;
+    this.isDead = false;
+    this.health = 100;
+    this.warmth = 100;
+    this.hunger = 100;
+    this.isVillageIntro = false;
+    this.isTrailerMode = false;
+    this.isDrawbridgeCutscene = false;
+    this.isSUVIntro = false;
+    this.isIntroPanning = false;
+
     this.sfx.init();
     this.sfx.stopTitleAmbience();
     this.sfx.playTorchIgnite();
+
     document.getElementById('main-menu').classList.add('hidden');
     document.getElementById('hud').classList.remove('hidden');
+    const cinematicOverlay = document.getElementById('cinematic-overlay');
+    if (cinematicOverlay) cinematicOverlay.classList.add('hidden');
+
+    // Position player safely standing in village square facing Elder Kaelen
+    const vY = getTerrainHeight(160.0, 248.0);
+    this.player.position.set(160.0, vY + 0.5, 248.0);
+    this.camera.position.set(160.0, vY + 1.7, 248.0);
+
+    const dx = 158.0 - 160.0;
+    const dz = 246.0 - 248.0;
+    this.cameraYaw = Math.atan2(-dx, -dz);
+    this.cameraPitch = 0;
+    this.lastSafePosition = this.player.position.clone();
+
+    // Enable first person arms and active torch
+    this.isTorchOn = true;
+    if (this.fpArms) {
+      this.fpArms.root.visible = (this.cameraMode === 'first');
+      this.fpArms.setHeldItem('torch');
+    }
+    if (this.torchLight) this.torchLight.intensity = 4.8;
+    if (this.worldTorchLight) this.worldTorchLight.intensity = 4.8;
+    if (this.flameMesh) this.flameMesh.visible = true;
+
     this.updateMissionHUD();
+    this.container.requestPointerLock();
+    this.showToast('Solstice Village: Approach Elder Kaelen by the bonfire [E] to begin!');
+
     // Request fullscreen when starting the game
     if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => {});
     }
-    this.startVillageIntroCutscene();
   }
 
   toggleTorch() {
@@ -10423,6 +10461,10 @@ class FrostboundGame {
     this.warmth = 100;
     this.hunger = 100;
     this.isTrailerMode = true;
+    this.isVillageIntro = false;
+    this.isDrawbridgeCutscene = false;
+    this.isSUVIntro = false;
+    this.isIntroPanning = false;
     this.trailerStartTime = performance.now();
     this.trailerDuration = 180.0; // Full 3-minute cinematic tour for promo recording
     this.currentCinematicTitle = '';
@@ -10451,6 +10493,9 @@ class FrostboundGame {
     // Hide 1st-person arms and held torch/stick so drone and cinematic camera views are 100% clean
     if (this.fpArms) {
       this.fpArms.root.visible = false;
+    }
+    if (this.flameMesh) {
+      this.flameMesh.visible = false;
     }
 
     // Setup and trigger User Voiceover 1 (trailer_intro.wav: 26.56s)
@@ -10490,6 +10535,37 @@ class FrostboundGame {
     }
   }
 
+  async convertWebMToMp4(webmBlob) {
+    try {
+      const input = new Input({
+        source: new BlobSource(webmBlob),
+        formats: ALL_FORMATS
+      });
+
+      const bufferTarget = new BufferTarget();
+      const output = new Output({
+        format: new Mp4OutputFormat(),
+        target: bufferTarget
+      });
+
+      const conversion = await Conversion.init({
+        input,
+        output
+      });
+
+      if (conversion && conversion.isValid) {
+        await conversion.execute();
+        if (bufferTarget.buffer && bufferTarget.buffer.byteLength > 0) {
+          return new Blob([bufferTarget.buffer], { type: 'video/mp4' });
+        }
+      }
+    } catch (err) {
+      console.warn('[Trailer Record] WebM to MP4 remuxing notice:', err);
+    }
+    // If transcoding not needed or not supported, package buffer with video/mp4 MIME container
+    return new Blob([webmBlob], { type: 'video/mp4' });
+  }
+
   startTrailerRecording() {
     try {
       const canvas = this.renderer.domElement;
@@ -10500,6 +10576,13 @@ class FrostboundGame {
       if (this.sfx && this.sfx.ctx) {
         try {
           const audioDest = this.sfx.ctx.createMediaStreamDestination();
+          // Connect all active audio sources to recording destination
+          if (this.sfx.windGain) this.sfx.windGain.connect(audioDest);
+          if (this.sfx.creekGain) this.sfx.creekGain.connect(audioDest);
+          if (this.sfx.genGain) this.sfx.genGain.connect(audioDest);
+          if (this.sfx.titleWindGain) this.sfx.titleWindGain.connect(audioDest);
+          if (this.sfx.titleDroneGain) this.sfx.titleDroneGain.connect(audioDest);
+          this._recAudioDest = audioDest; // Keep reference for cleanup
           const audioTracks = audioDest.stream.getAudioTracks();
           if (audioTracks.length > 0) {
             combinedStream = new MediaStream([
@@ -10512,9 +10595,9 @@ class FrostboundGame {
         }
       }
 
-      // Detect best video format supported by user's browser (prioritizing MP4 formats)
+      // Detect formats supported natively by browser
       let selectedMime = '';
-      let fileExt = 'mp4';
+      let isNativeMp4 = false;
 
       const mp4Formats = [
         'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
@@ -10523,26 +10606,24 @@ class FrostboundGame {
         'video/mp4'
       ];
       for (const fmt of mp4Formats) {
-        if (MediaRecorder.isTypeSupported(fmt)) {
+        if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(fmt)) {
           selectedMime = fmt;
-          fileExt = 'mp4';
+          isNativeMp4 = true;
           break;
         }
       }
 
-      // Fallback to webm if MP4 recording is not natively supported by browser engine
       if (!selectedMime) {
         const webmFormats = [
           'video/webm;codecs=vp9,opus',
           'video/webm;codecs=vp8,opus',
+          'video/webm;codecs=vp9',
           'video/webm;codecs=vp8',
           'video/webm'
         ];
         for (const fmt of webmFormats) {
-          if (MediaRecorder.isTypeSupported(fmt)) {
+          if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(fmt)) {
             selectedMime = fmt;
-            // Name file as MP4 as requested so media players immediately open it
-            fileExt = 'mp4';
             break;
           }
         }
@@ -10561,89 +10642,75 @@ class FrostboundGame {
         }
       };
 
-      this.mediaRecorder.onstop = () => {
-        const mimeToUse = selectedMime || 'video/mp4';
-        const blob = new Blob(this.recordedChunks, { type: mimeToUse });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.style.display = 'none';
-        a.href = url;
-        a.setAttribute('download', `Frostbound_Cinematic_Trailer.${fileExt}`);
-        document.body.appendChild(a);
-        
-        // Dispatch synthetic click for browser download
-        const clickEvent = new MouseEvent('click', {
-          view: window,
-          bubbles: true,
-          cancelable: true
-        });
-        a.dispatchEvent(clickEvent);
-        setTimeout(() => {
-          if (a.parentNode) a.parentNode.removeChild(a);
-          URL.revokeObjectURL(url);
-        }, 5000);
-
+      this.mediaRecorder.onstop = async () => {
         const badge = document.getElementById('trailer-rec-status');
-        if (badge) badge.classList.add('hidden');
         const recBtn = document.getElementById('btn-trailer-record');
-        if (recBtn) {
-          recBtn.textContent = '🔴 RECORD & SAVE VIDEO';
-          recBtn.style.background = 'linear-gradient(135deg, rgba(220, 38, 38, 0.8), rgba(185, 28, 28, 0.9))';
+        if (badge) {
+          badge.innerHTML = '<span class="rec-dot" style="background:#eab308"></span> EXPORTING MP4...';
         }
-        this.showToast('Cinematic Trailer recording downloaded as MP4!');
+        if (recBtn) {
+          recBtn.textContent = '⏳ PROCESSING MP4...';
+          recBtn.disabled = true;
+        }
+        this.showToast('Finalizing video... Generating MP4 file!');
+
+        try {
+          const rawBlob = new Blob(this.recordedChunks, { type: selectedMime || 'video/webm' });
+          let finalBlob = rawBlob;
+
+          if (!isNativeMp4) {
+            // Remux / convert WebM to MP4 using mediabunny
+            finalBlob = await this.convertWebMToMp4(rawBlob);
+          }
+
+          const url = URL.createObjectURL(finalBlob);
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          a.href = url;
+          a.download = `Frostbound_Cinematic_Trailer_${Date.now()}.mp4`;
+          document.body.appendChild(a);
+          
+          const clickEvent = new MouseEvent('click', {
+            view: window,
+            bubbles: true,
+            cancelable: true
+          });
+          a.dispatchEvent(clickEvent);
+
+          setTimeout(() => {
+            if (a.parentNode) a.parentNode.removeChild(a);
+            URL.revokeObjectURL(url);
+          }, 6000);
+
+          this.showToast('✅ Cinematic Trailer downloaded successfully as MP4!');
+        } catch (downloadErr) {
+          console.error('[Trailer Record] Export error:', downloadErr);
+          this.showToast('Download error occurred.');
+        } finally {
+          if (badge) badge.classList.add('hidden');
+          if (recBtn) {
+            recBtn.disabled = false;
+            recBtn.textContent = '🔴 RECORD & SAVE MP4';
+            recBtn.style.background = 'linear-gradient(135deg, rgba(220, 38, 38, 0.8), rgba(185, 28, 28, 0.9))';
+          }
+        }
       };
 
       this.mediaRecorder.start(1000); // 1-second chunks
       const badge = document.getElementById('trailer-rec-status');
-      if (badge) badge.classList.remove('hidden');
+      if (badge) {
+        badge.innerHTML = '<span class="rec-dot"></span> REC MP4 FULL HD';
+        badge.classList.remove('hidden');
+      }
       const recBtn = document.getElementById('btn-trailer-record');
       if (recBtn) {
-        recBtn.textContent = '⏹ STOP & DOWNLOAD';
+        recBtn.textContent = '⏹ STOP & SAVE MP4';
         recBtn.style.background = 'linear-gradient(135deg, #10b981, #059669)';
       }
-      this.showToast('Recording started! Click STOP & DOWNLOAD when ready.');
+      this.showToast('🎥 Recording started! Click STOP & SAVE MP4 when ready.');
     } catch (err) {
-      console.warn('[Trailer Record] Could not start MediaRecorder:', err);
-      // Fallback simple recorder without audio
-      try {
-        const canvas = this.renderer.domElement;
-        const canvasStream = canvas.captureStream(30);
-        this.recordedChunks = [];
-        this.mediaRecorder = new MediaRecorder(canvasStream);
-        this.mediaRecorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) this.recordedChunks.push(e.data);
-        };
-        this.mediaRecorder.onstop = () => {
-          const blob = new Blob(this.recordedChunks, { type: 'video/mp4' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.setAttribute('download', 'Frostbound_Cinematic_Trailer.mp4');
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => {
-            if (a.parentNode) a.parentNode.removeChild(a);
-            URL.revokeObjectURL(url);
-          }, 5000);
-          const badge = document.getElementById('trailer-rec-status');
-          if (badge) badge.classList.add('hidden');
-          const recBtn = document.getElementById('btn-trailer-record');
-          if (recBtn) {
-            recBtn.textContent = '🔴 RECORD & SAVE VIDEO';
-            recBtn.style.background = 'linear-gradient(135deg, rgba(220, 38, 38, 0.8), rgba(185, 28, 28, 0.9))';
-          }
-        };
-        this.mediaRecorder.start(1000);
-        const badge = document.getElementById('trailer-rec-status');
-        if (badge) badge.classList.remove('hidden');
-        const recBtn = document.getElementById('btn-trailer-record');
-        if (recBtn) {
-          recBtn.textContent = '⏹ STOP & DOWNLOAD';
-          recBtn.style.background = 'linear-gradient(135deg, #10b981, #059669)';
-        }
-      } catch (e2) {
-        console.error('[Trailer Record] Fallback failed:', e2);
-      }
+      console.warn('[Trailer Record] MediaRecorder init failed:', err);
+      this.showToast('Could not initialize video recorder on this browser.');
     }
   }
 
@@ -10990,6 +11057,7 @@ class FrostboundGame {
     this.sunLight.target.updateMatrixWorld();
 
     // Moon Position directly opposite to Sun
+    const pPos = this.player.position;
     if (this.moonGroup) {
       this.moonGroup.position.set(pPos.x - sunX, pPos.y - sunY, pPos.z - sunZ);
       this.moonGroup.visible = (-sunY > -60);
@@ -11228,6 +11296,19 @@ class FrostboundGame {
       }
     }
 
+    // 1. Scripted Cinematic Trailer Mode has highest priority
+    if (this.isTrailerMode) {
+      this.updateTrailer(delta);
+      this.updateSnow(delta);
+      this.updateMachines(delta);
+      if (this.deerHerd) this.deerHerd.update(delta, this.camera.position, false);
+      if (this.horseHerd) this.horseHerd.update(delta);
+      if (this.rabbitColony) this.rabbitColony.update(delta, this.camera.position);
+      if (this.birdFlocks) this.birdFlocks.update(delta, this.camera.position, false);
+      if (this.fishSchool) this.fishSchool.update(delta, this.camera.position);
+      return;
+    }
+
     // Handle Village Intro Cinematic Cutscene
     if (this.isVillageIntro) {
       this.updateVillageIntroCutscene(delta);
@@ -11278,19 +11359,7 @@ class FrostboundGame {
       return;
     }
 
-    // Handle 60s Scripted Trailer Mode
-    if (this.isTrailerMode) {
-      this.updateTrailer(delta);
-      this.updateSnow(delta);
-      this.updateMachines(delta);
-      if (this.deerHerd) this.deerHerd.update(delta, this.camera.position, false);
-      if (this.horseHerd) this.horseHerd.update(delta);
-      if (this.rabbitColony) this.rabbitColony.update(delta, this.camera.position);
-      if (this.birdFlocks) this.birdFlocks.update(delta, this.camera.position, false);
-      if (this.fishSchool) this.fishSchool.update(delta, this.camera.position);
-      return;
-    }
-
+    // Handle Movement & Exploration in standard gameplay
     this.handleMovement(delta);
     this.checkRopeBridgeCrossing();
     this.updateWolves(delta);
